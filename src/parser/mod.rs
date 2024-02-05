@@ -1,6 +1,6 @@
 use tokenizer::{Keyword, Token, Tokenizer};
 
-use self::ast::{Expression, Literal};
+use self::ast::{Expression, Literal, Operator};
 
 pub mod ast;
 pub mod tokenizer;
@@ -46,7 +46,7 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_table(&mut self) -> ast::Table {
-    let token = self.tokenizer.next().unwrap(); // better to go with expect
+    let token = self.tokenizer.next().unwrap(); // better to go with expec
 
     match token {
       Token::String(name) => ast::Table { name: name, alias: None },
@@ -54,41 +54,82 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_where_clause(&mut self) -> Option<ast::Expression> {
-    let token = self.tokenizer.peek().unwrap();
+  fn parse_where_clause(&mut self) -> Option<Expression> {
+    let token = match self.tokenizer.peek() {
+      Some(token) => token,
+      None => return None,
+    };
 
     if let Token::Keyword(Keyword::WHERE) = token {
       self.tokenizer.next(); // If where exist consume it
 
-      let mut conditions = Vec::new();
+      let mut condition = self.parse_condition();
 
-      loop {
-        let left = match self.tokenizer.next().expect("Expected identifier after WHERE") {
-          Token::String(name) => Box::new(Expression::Identifier(name)),
-          _ => panic!("Expected identifier after WHERE"),
-        };
-
-        let operator = self.tokenizer.next().unwrap().to_operator();
-
-        let right = match self.tokenizer.next().expect("Expected value after operator") {
-          Token::String(val) => Box::new(Expression::Literal(Literal::String(val))),
-          Token::Number(num) => Box::new(Expression::Literal(Literal::Number(num.parse().expect("Failed to parse number")))),
-          _ => panic!("Expected value after operator"),
-        };
-
-        conditions.push(Expression::BinaryExpression { left, operator, right });
-
-        match self.tokenizer.peek() {
-          Some(Token::Keyword(Keyword::AND)) | Some(Token::Keyword(Keyword::OR)) => {
-            self.tokenizer.next(); // consume the AND/OR keyword
-          }
-          _ => break,
-        }
+      while let Some(operator) = self.parse_logical_operator() {
+        let right_condition = self.parse_condition();
+        condition = Expression::BinaryExpression { left: Box::new(condition), operator, right: Box::new(right_condition) };
       }
 
-      Some(Expression::AndConditions(conditions))
+      Some(condition)
     } else {
       None
+    }
+  }
+
+  fn parse_condition(&mut self) -> Expression {
+    let left = match self.tokenizer.next().expect("Expected identifier after WHERE") {
+      Token::String(name) => Box::new(Expression::Identifier(name)),
+      _ => panic!("Expected identifier after WHERE"),
+    };
+
+    let operator = self.tokenizer.next().unwrap().to_operator();
+
+    let right = match self.tokenizer.next().expect("Expected value after operator") {
+      Token::String(val) => Box::new(Expression::Literal(Literal::String(val))),
+      Token::Number(num) => Box::new(Expression::Literal(Literal::Number(num.parse().expect("Failed to parse number")))),
+      _ => panic!("Expected value after operator"),
+    };
+
+    Expression::BinaryExpression { left, operator, right }
+  }
+
+  fn parse_logical_operator(&mut self) -> Option<Operator> {
+    match self.tokenizer.peek() {
+      Some(Token::Keyword(Keyword::AND)) => {
+        self.tokenizer.next();
+        Some(Operator::And)
+      }
+      Some(Token::Keyword(Keyword::OR)) => {
+        self.tokenizer.next();
+        Some(Operator::Or)
+      }
+      _ => None,
+    }
+  }
+
+  fn parse_limit(&mut self) -> Option<usize> {
+    match self.tokenizer.peek() {
+      Some(Token::Keyword(Keyword::LIMIT)) => {
+        self.tokenizer.next(); // consume the LIMIT keyword
+        match self.tokenizer.next() {
+          Some(Token::Number(num)) => Some(num.parse().expect("Failed to parse number")),
+          _ => panic!("Expected number after LIMIT"),
+        }
+      }
+      _ => None,
+    }
+  }
+
+  fn parse_offset(&mut self) -> Option<usize> {
+    match self.tokenizer.peek() {
+      Some(Token::Keyword(Keyword::OFFSET)) => {
+        self.tokenizer.next(); // consume the OFFSET keyword
+        match self.tokenizer.next() {
+          Some(Token::Number(num)) => Some(num.parse().expect("Failed to parse number")),
+          _ => panic!("Expected number after OFFSET"),
+        }
+      }
+      _ => None,
     }
   }
 
@@ -98,7 +139,20 @@ impl<'a> Parser<'a> {
     let select = self.parse_select_columns();
     let from = self.parse_table();
     let where_clause = self.parse_where_clause();
+    let mut limit = None;
+    let mut offset = None;
 
-    ast::Statement::Select(ast::SelectStatement { from, select, where_clause })
+    for _ in 0..2 {
+      match self.tokenizer.peek() {
+        Some(Token::Keyword(Keyword::LIMIT)) => {
+          limit = self.parse_limit();
+        }
+        Some(Token::Keyword(Keyword::OFFSET)) => {
+          offset = self.parse_offset();
+        }
+        _ => break,
+      }
+    }
+    ast::Statement::Select(ast::SelectStatement { from, select, where_clause, limit, offset })
   }
 }

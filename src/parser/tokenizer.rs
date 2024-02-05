@@ -46,6 +46,8 @@ pub enum Keyword {
   AND,
   WHERE,
   OR,
+  LIMIT,
+  OFFSET,
 }
 
 impl Keyword {
@@ -57,6 +59,8 @@ impl Keyword {
       Self::WHERE => "WHERE",
       Self::AND => "AND",
       Self::OR => "OR",
+      Self::LIMIT => "LIMIT",
+      Self::OFFSET => "OFFSET",
     }
   }
 
@@ -68,6 +72,8 @@ impl Keyword {
       "INSERT" => Some(Keyword::INSERT),
       "AND" => Some(Keyword::AND),
       "OR" => Some(Keyword::OR),
+      "LIMIT" => Some(Keyword::LIMIT),
+      "OFFSET" => Some(Keyword::OFFSET),
       _ => None,
     }
   }
