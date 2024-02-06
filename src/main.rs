@@ -1,6 +1,6 @@
 pub mod parser;
 fn main() {
-  let input = "SELECT * FROM table WHERE age = 22 and age = 23 or age < 10 OFFSET 30 LIMIT 1";
+  let input = "SELECT age, name FROM table WHERE adult = null";
   // let mut tokenizer = Tokenizer::new(input);
   // let token = tokenizer.read();
   // println!("{:?}", token);

@@ -22,6 +22,10 @@ pub enum Token {
   CloseParen,
   Comma,
   Semicolon,
+  Date(String),
+  Timestamp(String),
+  Boolean(bool),
+  Null,
 }
 
 impl Token {
@@ -33,6 +37,9 @@ impl Token {
       Token::LessThanOrEqual => ast::Operator::LessThanOrEqual,
       Token::GreaterThan => ast::Operator::GreaterThan,
       Token::GreaterThanOrEqual => ast::Operator::GreaterThanOrEqual,
+      Token::Plus => ast::Operator::Add,
+      Token::Minus => ast::Operator::Subtract,
+      Token::Slash => ast::Operator::Divide,
       _ => panic!("Unexpected token, expected an operator"),
     }
   }

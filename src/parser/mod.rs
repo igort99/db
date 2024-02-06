@@ -1,9 +1,10 @@
+use ast::{Expression, Literal, Operator};
+use error::ParserError;
 use tokenizer::{Keyword, Token, Tokenizer};
 
-use self::ast::{Expression, Literal, Operator};
-
-pub mod ast;
-pub mod tokenizer;
+mod ast;
+mod error;
+mod tokenizer;
 
 pub struct Parser<'a> {
   tokenizer: std::iter::Peekable<Tokenizer<'a>>,
@@ -15,29 +16,33 @@ impl<'a> Parser<'a> {
   }
 
   pub fn parse(&mut self) -> Result<ast::Statement, Box<dyn std::error::Error>> {
-    let statement = self.parse_statement();
-
+    let statement = self.parse_statement()?;
     Ok(statement)
   }
 
-  fn parse_statement(&mut self) -> ast::Statement {
+  fn parse_statement(&mut self) -> Result<ast::Statement, ParserError> {
     match self.tokenizer.peek() {
       Some(Token::Keyword(Keyword::SELECT)) => self.parse_select_statement(),
-      _ => panic!("Unexpected token: {:?}", self.tokenizer.peek()),
+      _ => Err(ParserError::UnexpectedToken),
     }
   }
 
-  fn parse_select_columns(&mut self) -> Vec<String> {
-    let mut select: Vec<String> = Vec::new();
+  fn parse_select_columns(&mut self) -> Vec<Expression> {
+    let mut select: Vec<Expression> = Vec::new();
 
     loop {
-      let token = self.tokenizer.next().unwrap(); // better to go with expect
+      let token = self.tokenizer.next().unwrap();
 
       match token {
-        Token::String(name) => select.push(name),
-        Token::Asterisk => select.push('*'.to_string()),
+        Token::String(name) => select.push(Expression::Identifier(name)),
+        Token::Asterisk => select.push(Expression::Identifier("*".to_string())),
         Token::Comma => continue,
-        Token::Keyword(Keyword::FROM) => break,
+        Token::Keyword(Keyword::FROM) => {
+          if select.is_empty() {
+            panic!("No columns specified for SELECT");
+          }
+          break;
+        }
         _ => panic!("Unexpected token"),
       }
     }
@@ -45,12 +50,15 @@ impl<'a> Parser<'a> {
     select
   }
 
-  fn parse_table(&mut self) -> ast::Table {
-    let token = self.tokenizer.next().unwrap(); // better to go with expec
+  fn parse_table(&mut self) -> Result<ast::Table, ParserError> {
+    let token = match self.tokenizer.next() {
+      Some(token) => token,
+      None => return Err(ParserError::UnexpectedEndOfStream),
+    };
 
     match token {
-      Token::String(name) => ast::Table { name: name, alias: None },
-      _ => panic!("Expected table name"), // should change everything for errors so client can know what issue they made
+      Token::String(name) => Ok(ast::Table { name, alias: None }),
+      _ => Err(ParserError::ExpectedIdentifier),
     }
   }
 
@@ -61,7 +69,7 @@ impl<'a> Parser<'a> {
     };
 
     if let Token::Keyword(Keyword::WHERE) = token {
-      self.tokenizer.next(); // If where exist consume it
+      self.tokenizer.next();
 
       let mut condition = self.parse_condition();
 
@@ -87,6 +95,12 @@ impl<'a> Parser<'a> {
     let right = match self.tokenizer.next().expect("Expected value after operator") {
       Token::String(val) => Box::new(Expression::Literal(Literal::String(val))),
       Token::Number(num) => Box::new(Expression::Literal(Literal::Number(num.parse().expect("Failed to parse number")))),
+      Token::Date(date) => Box::new(Expression::Literal(Literal::Date(date.parse().expect("Failed to parse timestamp")))),
+      Token::Timestamp(date) => {
+        Box::new(Expression::Literal(Literal::Timestamp(date.parse().expect("Failed to parse timestamp"))))
+      }
+      Token::Boolean(val) => Box::new(Expression::Literal(Literal::Boolean(val))),
+      Token::Null => Box::new(Expression::Literal(Literal::Null)),
       _ => panic!("Expected value after operator"),
     };
 
@@ -107,52 +121,63 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_limit(&mut self) -> Option<usize> {
-    match self.tokenizer.peek() {
-      Some(Token::Keyword(Keyword::LIMIT)) => {
-        self.tokenizer.next(); // consume the LIMIT keyword
-        match self.tokenizer.next() {
-          Some(Token::Number(num)) => Some(num.parse().expect("Failed to parse number")),
-          _ => panic!("Expected number after LIMIT"),
-        }
-      }
-      _ => None,
-    }
-  }
-
-  fn parse_offset(&mut self) -> Option<usize> {
-    match self.tokenizer.peek() {
-      Some(Token::Keyword(Keyword::OFFSET)) => {
-        self.tokenizer.next(); // consume the OFFSET keyword
-        match self.tokenizer.next() {
-          Some(Token::Number(num)) => Some(num.parse().expect("Failed to parse number")),
-          _ => panic!("Expected number after OFFSET"),
-        }
-      }
-      _ => None,
-    }
-  }
-
-  fn parse_select_statement(&mut self) -> ast::Statement {
-    self.tokenizer.next();
-
-    let select = self.parse_select_columns();
-    let from = self.parse_table();
-    let where_clause = self.parse_where_clause();
+  fn parse_limit_and_offset(&mut self) -> (Option<Expression>, Option<Expression>) {
     let mut limit = None;
     let mut offset = None;
 
-    for _ in 0..2 {
-      match self.tokenizer.peek() {
-        Some(Token::Keyword(Keyword::LIMIT)) => {
-          limit = self.parse_limit();
+    while let Some(token) = self.tokenizer.peek() {
+      match token {
+        Token::Keyword(Keyword::LIMIT) if limit.is_none() => {
+          self.tokenizer.next();
+
+          if let Some(Token::Number(num)) = self.tokenizer.next() {
+            let number = num.parse::<f64>().expect("Failed to parse number");
+            limit = Some(Expression::Literal(Literal::Number(number)));
+          } else {
+            panic!("Expected number after LIMIT");
+          }
         }
-        Some(Token::Keyword(Keyword::OFFSET)) => {
-          offset = self.parse_offset();
+        Token::Keyword(Keyword::OFFSET) if offset.is_none() => {
+          self.tokenizer.next();
+
+          if let Some(Token::Number(num)) = self.tokenizer.next() {
+            let number = num.parse::<f64>().expect("Failed to parse number");
+            offset = Some(Expression::Literal(Literal::Number(number)));
+          } else {
+            panic!("Expected number after OFFSET");
+          }
         }
         _ => break,
       }
     }
-    ast::Statement::Select(ast::SelectStatement { from, select, where_clause, limit, offset })
+
+    (limit, offset)
+  }
+
+  fn parse_group_by(&mut self) -> Option<Vec<Expression>> {
+    None
+  }
+
+  fn parse_having(&mut self) -> Option<Expression> {
+    None
+  }
+
+  fn parse_order_by(&mut self) -> Option<Vec<(Expression, ast::Order)>> {
+    None
+  }
+
+  fn parse_select_statement(&mut self) -> Result<ast::Statement, ParserError> {
+    self.tokenizer.next();
+
+    let select = self.parse_select_columns();
+    let from = self.parse_table()?;
+
+    let where_clause = self.parse_where_clause();
+    let group_by = self.parse_group_by();
+    let having = self.parse_having();
+    let order_by = self.parse_order_by();
+    let (limit, offset) = self.parse_limit_and_offset();
+
+    Ok(ast::Statement::Select(ast::SelectStatement { select, from, where_clause, group_by, having, order_by, limit, offset }))
   }
 }
