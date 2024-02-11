@@ -1,23 +1,11 @@
 pub mod parser;
 fn main() {
-  let input = "SELECT age, name FROM table WHERE adult = null";
-  // let mut tokenizer = Tokenizer::new(input);
-  // let token = tokenizer.read();
-  // println!("{:?}", token);
-  // let token2 = tokenizer.read();
-  // println!("{:?}", token2);
-  // let token3 = tokenizer.read();
-  // println!("{:?}", token3);
-  // let token4 = tokenizer.read();
-  // println!("{:?}", token4);
-  // let token5 = tokenizer.read();
-  // println!("{:?}", token5);
-  // let token6 = tokenizer.read();
-  // println!("{:?}", token6);
-  // let token7 = tokenizer.read();
-  // println!("{:?}", token7);
-  // let token8 = tokenizer.read();
-  // println!("{:?}", token8);
+  let input = "SELECT age, name FROM table WHERE adult = 'yes' and 
+  year = '2012-01-22' and is_emigrant = true and name = null 
+  group by name, age
+  having age > 18
+  order by name asc, age desc
+  offset 6 limit 5";
 
   let mut parser = parser::Parser::new(input);
   let statement = parser.parse();

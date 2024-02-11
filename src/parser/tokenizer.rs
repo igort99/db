@@ -1,8 +1,9 @@
+use chrono::{NaiveDate, NaiveDateTime};
+
+use super::{ast, error::ParserError};
 use std::{iter::Peekable, str::Chars};
 
-use super::ast;
-
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Token {
   Keyword(Keyword),
   String(String),
@@ -29,23 +30,23 @@ pub enum Token {
 }
 
 impl Token {
-  pub fn to_operator(&self) -> ast::Operator {
+  pub fn to_operator(&self) -> Result<ast::Operator, ParserError> {
     match self {
-      Token::Equal => ast::Operator::Equal,
-      Token::Not => ast::Operator::NotEqual,
-      Token::LessThan => ast::Operator::LessThan,
-      Token::LessThanOrEqual => ast::Operator::LessThanOrEqual,
-      Token::GreaterThan => ast::Operator::GreaterThan,
-      Token::GreaterThanOrEqual => ast::Operator::GreaterThanOrEqual,
-      Token::Plus => ast::Operator::Add,
-      Token::Minus => ast::Operator::Subtract,
-      Token::Slash => ast::Operator::Divide,
-      _ => panic!("Unexpected token, expected an operator"),
+      Token::Equal => Ok(ast::Operator::Equal),
+      Token::Not => Ok(ast::Operator::NotEqual),
+      Token::LessThan => Ok(ast::Operator::LessThan),
+      Token::LessThanOrEqual => Ok(ast::Operator::LessThanOrEqual),
+      Token::GreaterThan => Ok(ast::Operator::GreaterThan),
+      Token::GreaterThanOrEqual => Ok(ast::Operator::GreaterThanOrEqual),
+      Token::Plus => Ok(ast::Operator::Add),
+      Token::Minus => Ok(ast::Operator::Subtract),
+      Token::Slash => Ok(ast::Operator::Divide),
+      _ => Err(ParserError::UnexpectedToken),
     }
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Keyword {
   SELECT,
   FROM,
@@ -55,21 +56,39 @@ pub enum Keyword {
   OR,
   LIMIT,
   OFFSET,
+  GROUP,
+  BY,
+  ORDER,
+  ASC,
+  DESC,
+  HAVING,
+  UPDATE,
+  SET,
+  DELETE,
+  VAULES,
+  CREATE,
+  TABLE,
+  ALTER,
+  DROP,
+  PRIMARY,
+  KEY,
+  FOREIGN,
+  COLUMN,
 }
 
 impl Keyword {
-  pub fn to_string(&self) -> &str {
-    match &self {
-      Self::SELECT => "SELECT",
-      Self::INSERT => "INSERT",
-      Self::FROM => "FROM",
-      Self::WHERE => "WHERE",
-      Self::AND => "AND",
-      Self::OR => "OR",
-      Self::LIMIT => "LIMIT",
-      Self::OFFSET => "OFFSET",
-    }
-  }
+  // pub fn to_string(&self) -> &str {
+  //   match &self {
+  //     Self::SELECT => "SELECT",
+  //     Self::INSERT => "INSERT",
+  //     Self::FROM => "FROM",
+  //     Self::WHERE => "WHERE",
+  //     Self::AND => "AND",
+  //     Self::OR => "OR",
+  //     Self::LIMIT => "LIMIT",
+  //     Self::OFFSET => "OFFSET",
+  //   }
+  // }
 
   pub fn from_string(s: &str) -> Option<Keyword> {
     match s.to_uppercase().as_ref() {
@@ -81,6 +100,24 @@ impl Keyword {
       "OR" => Some(Keyword::OR),
       "LIMIT" => Some(Keyword::LIMIT),
       "OFFSET" => Some(Keyword::OFFSET),
+      "GROUP" => Some(Keyword::GROUP),
+      "BY" => Some(Keyword::BY),
+      "ORDER" => Some(Keyword::ORDER),
+      "ASC" => Some(Keyword::ASC),
+      "DESC" => Some(Keyword::DESC),
+      "HAVING" => Some(Keyword::HAVING),
+      "UPDATE" => Some(Keyword::UPDATE),
+      "SET" => Some(Keyword::SET),
+      "DELETE" => Some(Keyword::DELETE),
+      "VAULES" => Some(Keyword::VAULES),
+      "CREATE" => Some(Keyword::CREATE),
+      "TABLE" => Some(Keyword::TABLE),
+      "ALTER" => Some(Keyword::ALTER),
+      "DROP" => Some(Keyword::DROP),
+      "PRIMARY" => Some(Keyword::PRIMARY),
+      "KEY" => Some(Keyword::KEY),
+      "FOREIGN" => Some(Keyword::FOREIGN),
+      "COLUMN" => Some(Keyword::COLUMN),
       _ => None,
     }
   }
@@ -93,7 +130,7 @@ pub struct Tokenizer<'a> {
 impl<'a> Iterator for Tokenizer<'a> {
   type Item = Token;
 
-  fn next(&mut self) -> Option<Self::Item> {
+  fn next(&mut self) -> Option<Token> {
     self.read()
   }
 }
@@ -125,22 +162,24 @@ impl<'a> Tokenizer<'a> {
   pub fn read(&mut self) -> Option<Token> {
     self.skip_whitespace();
 
-    match self.iterator.peek() {
+    match self.iterator.peek().cloned() {
       Some(ch) if ch.is_numeric() => Some(self.read_number()),
       Some(ch) if ch.is_alphabetic() => Some(self.read_keyword_or_string()),
-      Some(ch) if is_symbol(*ch) => self.read_symbol(),
+      Some(ch) if ch == '\'' => self.read_string(ch).ok(),
+      Some(ch) if is_symbol(ch) => self.read_symbol().ok(),
       Some(_) => None,
       None => None,
     }
   }
 
   fn read_keyword_or_string(&mut self) -> Token {
-    let value = self.next_while(|c| c.is_alphabetic());
+    let string = self.next_while(|c| is_keyword_or_identifier(c));
 
-    if let Some(keyword) = Keyword::from_string(&value) {
-      Token::Keyword(keyword)
-    } else {
-      Token::String(value)
+    match string.to_uppercase().as_str() {
+      "TRUE" => Token::Boolean(true),
+      "FALSE" => Token::Boolean(false),
+      "NULL" => Token::Null,
+      _ => Keyword::from_string(&string).map_or_else(|| Token::String(string), Token::Keyword),
     }
   }
 
@@ -149,38 +188,79 @@ impl<'a> Tokenizer<'a> {
     Token::Number(value)
   }
 
-  fn read_symbol(&mut self) -> Option<Token> {
-    match self.iterator.next() {
-      Some('*') => Some(Token::Asterisk),
-      Some('>') => {
-        if let Some(&'=') = self.iterator.peek() {
-          self.iterator.next(); // Consume the '='
-          Some(Token::GreaterThanOrEqual)
-        } else {
-          Some(Token::GreaterThan)
+  fn parse_date_or_timestamp(&self, literal: &str) -> Token {
+    if NaiveDate::parse_from_str(literal, "%Y-%m-%d").is_ok() {
+      return Token::Date(literal.to_string());
+    }
+
+    if NaiveDateTime::parse_from_str(literal, "%Y-%m-%d %H:%M:%S").is_ok() {
+      return Token::Timestamp(literal.to_string());
+    }
+
+    Token::String(literal.to_string())
+  }
+
+  fn read_string(&mut self, _first: char) -> Result<Token, ParserError> {
+    let mut string = String::new();
+
+    while let Some(&next) = self.iterator.peek() {
+      match next {
+        'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '\'' | '-' | ':' => {
+          string.push(self.iterator.next().unwrap());
         }
+        _ => break,
       }
-      Some('<') => {
-        if let Some(&'=') = self.iterator.peek() {
-          self.iterator.next(); // Consume the '='
-          Some(Token::LessThanOrEqual)
-        } else {
-          Some(Token::LessThan)
-        }
-      }
-      Some('=') => Some(Token::Equal),
-      Some('!') => Some(Token::Not),
-      Some('+') => Some(Token::Plus),
-      Some('-') => Some(Token::Minus),
-      Some('/') => Some(Token::Slash),
-      Some('%') => Some(Token::Percent),
-      Some('(') => Some(Token::OpenParen),
-      Some(')') => Some(Token::CloseParen),
-      Some(',') => Some(Token::Comma),
-      Some(';') => Some(Token::Semicolon),
-      _ => None,
+    }
+
+    if string.starts_with('\'') && string.ends_with('\'') {
+      let literal = string[1..string.len() - 1].to_string();
+
+      return Ok(self.parse_date_or_timestamp(&literal));
+    }
+
+    match string.to_uppercase().as_str() {
+      "SELECT" => Ok(Token::Keyword(Keyword::SELECT)),
+      "FROM" => Ok(Token::Keyword(Keyword::FROM)),
+      "WHERE" => Ok(Token::Keyword(Keyword::WHERE)),
+      "AND" => Ok(Token::Keyword(Keyword::AND)),
+      "OR" => Ok(Token::Keyword(Keyword::OR)),
+      "OFFSET" => Ok(Token::Keyword(Keyword::OFFSET)),
+      "LIMIT" => Ok(Token::Keyword(Keyword::LIMIT)),
+      _ => Ok(Token::String(string)),
     }
   }
+
+  fn read_symbol(&mut self) -> Result<Token, ParserError> {
+    match self.iterator.next() {
+      Some('*') => Ok(Token::Asterisk),
+      Some('>') => self.read_compound_token(Token::GreaterThan, Token::GreaterThanOrEqual),
+      Some('<') => self.read_compound_token(Token::LessThan, Token::LessThanOrEqual),
+      Some('=') => Ok(Token::Equal),
+      Some('!') => Ok(Token::Not),
+      Some('+') => Ok(Token::Plus),
+      Some('-') => Ok(Token::Minus),
+      Some('/') => Ok(Token::Slash),
+      Some('%') => Ok(Token::Percent),
+      Some('(') => Ok(Token::OpenParen),
+      Some(')') => Ok(Token::CloseParen),
+      Some(',') => Ok(Token::Comma),
+      Some(';') => Ok(Token::Semicolon),
+      _ => Err(ParserError::UnexpectedSymbol),
+    }
+  }
+
+  fn read_compound_token(&mut self, single: Token, compound: Token) -> Result<Token, ParserError> {
+    if let Some(&'=') = self.iterator.peek() {
+      self.iterator.next();
+      Ok(compound)
+    } else {
+      Ok(single)
+    }
+  }
+}
+
+fn is_keyword_or_identifier(ch: char) -> bool {
+  ch.is_alphabetic() || ch == '_'
 }
 
 // trafer it to utils.rs

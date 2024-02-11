@@ -23,31 +23,32 @@ impl<'a> Parser<'a> {
   fn parse_statement(&mut self) -> Result<ast::Statement, ParserError> {
     match self.tokenizer.peek() {
       Some(Token::Keyword(Keyword::SELECT)) => self.parse_select_statement(),
+      Some(Token::Keyword(Keyword::INSERT)) => self.parse_ddl_statement(),
+      Some(Token::Keyword(Keyword::UPDATE)) => self.parse_ddl_statement(),
+      Some(Token::Keyword(Keyword::DELETE)) => self.parse_ddl_statement(),
       _ => Err(ParserError::UnexpectedToken),
     }
   }
 
-  fn parse_select_columns(&mut self) -> Vec<Expression> {
+  fn parse_select_columns(&mut self) -> Result<Vec<Expression>, ParserError> {
     let mut select: Vec<Expression> = Vec::new();
 
-    loop {
-      let token = self.tokenizer.next().unwrap();
-
+    while let Some(token) = self.tokenizer.next() {
       match token {
         Token::String(name) => select.push(Expression::Identifier(name)),
         Token::Asterisk => select.push(Expression::Identifier("*".to_string())),
-        Token::Comma => continue,
         Token::Keyword(Keyword::FROM) => {
           if select.is_empty() {
-            panic!("No columns specified for SELECT");
+            return Err(ParserError::NoColumnsSpecified);
           }
           break;
         }
-        _ => panic!("Unexpected token"),
+        Token::Comma => {}
+        _ => return Err(ParserError::UnexpectedToken),
       }
     }
 
-    select
+    Ok(select)
   }
 
   fn parse_table(&mut self) -> Result<ast::Table, ParserError> {
@@ -62,122 +63,224 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_where_clause(&mut self) -> Option<Expression> {
-    let token = match self.tokenizer.peek() {
-      Some(token) => token,
-      None => return None,
-    };
+  fn parse_where_clause(&mut self) -> Result<Option<Expression>, ParserError> {
+    match self.tokenizer.peek() {
+      Some(Token::Keyword(Keyword::WHERE)) => {
+        self.tokenizer.next();
 
-    if let Token::Keyword(Keyword::WHERE) = token {
-      self.tokenizer.next();
+        let mut condition = self.parse_condition()?;
 
-      let mut condition = self.parse_condition();
+        while let Some(operator) = self.parse_logical_operator() {
+          let right_condition = self.parse_condition()?;
+          condition = Expression::BinaryExpression { left: Box::new(condition), operator, right: Box::new(right_condition) };
+        }
 
-      while let Some(operator) = self.parse_logical_operator() {
-        let right_condition = self.parse_condition();
-        condition = Expression::BinaryExpression { left: Box::new(condition), operator, right: Box::new(right_condition) };
+        Ok(Some(condition))
       }
-
-      Some(condition)
-    } else {
-      None
+      _ => Ok(None),
     }
   }
 
-  fn parse_condition(&mut self) -> Expression {
-    let left = match self.tokenizer.next().expect("Expected identifier after WHERE") {
-      Token::String(name) => Box::new(Expression::Identifier(name)),
-      _ => panic!("Expected identifier after WHERE"),
+  fn parse_literal(&self, token: Token) -> Result<Literal, ParserError> {
+    match token {
+      Token::String(val) => Ok(Literal::String(val)),
+      Token::Number(num) => num.parse().map(Literal::Number).map_err(|_| ParserError::FailedToParseNumber),
+      Token::Date(date) => date.parse().map(Literal::Date).map_err(|_| ParserError::FailedToParseDate),
+      Token::Timestamp(date) => date.parse().map(Literal::Timestamp).map_err(|_| ParserError::FailedToParseTimestamp),
+      Token::Boolean(val) => Ok(Literal::Boolean(val)),
+      Token::Null => Ok(Literal::Null),
+      _ => Err(ParserError::ExpectedValue),
+    }
+  }
+
+  fn parse_condition(&mut self) -> Result<Expression, ParserError> {
+    let left = match self.tokenizer.next() {
+      Some(Token::String(name)) => Box::new(Expression::Identifier(name)),
+      _ => return Err(ParserError::ExpectedIdentifier),
     };
 
-    let operator = self.tokenizer.next().unwrap().to_operator();
+    let operator = self.tokenizer.next().ok_or(ParserError::UnexpectedEndOfStream)?.to_operator()?;
 
-    let right = match self.tokenizer.next().expect("Expected value after operator") {
-      Token::String(val) => Box::new(Expression::Literal(Literal::String(val))),
-      Token::Number(num) => Box::new(Expression::Literal(Literal::Number(num.parse().expect("Failed to parse number")))),
-      Token::Date(date) => Box::new(Expression::Literal(Literal::Date(date.parse().expect("Failed to parse timestamp")))),
-      Token::Timestamp(date) => {
-        Box::new(Expression::Literal(Literal::Timestamp(date.parse().expect("Failed to parse timestamp"))))
+    let right = match self.tokenizer.next() {
+      Some(token) => self.parse_literal(token).map(|literal| Box::new(Expression::Literal(literal))),
+      _ => return Err(ParserError::ExpectedValue),
+    }?;
+
+    Ok(Expression::BinaryExpression { left, operator, right })
+  }
+
+  fn match_keyword_to_operator(&mut self, keyword: Keyword, operator: Operator) -> Option<Operator> {
+    if let Some(Token::Keyword(k)) = self.tokenizer.peek() {
+      if *k == keyword {
+        self.tokenizer.next();
+        return Some(operator);
       }
-      Token::Boolean(val) => Box::new(Expression::Literal(Literal::Boolean(val))),
-      Token::Null => Box::new(Expression::Literal(Literal::Null)),
-      _ => panic!("Expected value after operator"),
-    };
+    }
 
-    Expression::BinaryExpression { left, operator, right }
+    None
   }
 
   fn parse_logical_operator(&mut self) -> Option<Operator> {
-    match self.tokenizer.peek() {
-      Some(Token::Keyword(Keyword::AND)) => {
-        self.tokenizer.next();
-        Some(Operator::And)
-      }
-      Some(Token::Keyword(Keyword::OR)) => {
-        self.tokenizer.next();
-        Some(Operator::Or)
-      }
-      _ => None,
-    }
+    self
+      .match_keyword_to_operator(Keyword::AND, Operator::And)
+      .or_else(|| self.match_keyword_to_operator(Keyword::OR, Operator::Or))
   }
 
-  fn parse_limit_and_offset(&mut self) -> (Option<Expression>, Option<Expression>) {
+  fn parse_limit_and_offset(&mut self) -> Result<(Option<Expression>, Option<Expression>), ParserError> {
     let mut limit = None;
     let mut offset = None;
 
-    while let Some(token) = self.tokenizer.peek() {
-      match token {
-        Token::Keyword(Keyword::LIMIT) if limit.is_none() => {
-          self.tokenizer.next();
-
-          if let Some(Token::Number(num)) = self.tokenizer.next() {
-            let number = num.parse::<f64>().expect("Failed to parse number");
-            limit = Some(Expression::Literal(Literal::Number(number)));
-          } else {
-            panic!("Expected number after LIMIT");
-          }
+    for _ in 0..2 {
+      match self.tokenizer.peek() {
+        Some(Token::Keyword(Keyword::LIMIT)) if limit.is_none() => {
+          limit = self.parse_limit_or_offset(Keyword::LIMIT)?;
         }
-        Token::Keyword(Keyword::OFFSET) if offset.is_none() => {
-          self.tokenizer.next();
-
-          if let Some(Token::Number(num)) = self.tokenizer.next() {
-            let number = num.parse::<f64>().expect("Failed to parse number");
-            offset = Some(Expression::Literal(Literal::Number(number)));
-          } else {
-            panic!("Expected number after OFFSET");
-          }
+        Some(Token::Keyword(Keyword::OFFSET)) if offset.is_none() => {
+          offset = self.parse_limit_or_offset(Keyword::OFFSET)?;
         }
         _ => break,
       }
     }
 
-    (limit, offset)
+    Ok((limit, offset))
   }
 
-  fn parse_group_by(&mut self) -> Option<Vec<Expression>> {
-    None
+  fn parse_limit_or_offset(&mut self, keyword: Keyword) -> Result<Option<Expression>, ParserError> {
+    match self.tokenizer.peek() {
+      Some(Token::Keyword(k)) if *k == keyword => {
+        self.tokenizer.next();
+        match self.tokenizer.next() {
+          Some(Token::Number(num)) => num
+            .parse::<f64>()
+            .map(|number| Some(Expression::Literal(Literal::Number(number))))
+            .map_err(|_| ParserError::FailedToParseNumber),
+          _ => Err(ParserError::ExpectedValue),
+        }
+      }
+      _ => Ok(None),
+    }
   }
 
-  fn parse_having(&mut self) -> Option<Expression> {
-    None
+  fn check_if_next_token_is(&mut self, keyword: Keyword) -> bool {
+    match self.tokenizer.peek() {
+      Some(Token::Keyword(k)) if *k == keyword => true,
+      _ => false,
+    }
   }
 
-  fn parse_order_by(&mut self) -> Option<Vec<(Expression, ast::Order)>> {
-    None
+  fn parse_group_by(&mut self) -> Result<Option<Vec<Expression>>, ParserError> {
+    let mut group_by_exprs = Vec::new();
+
+    if self.check_if_next_token_is(Keyword::GROUP) {
+      self.tokenizer.next();
+      self.check_if_next_token_is_keyword(Keyword::BY)?;
+
+      loop {
+        let expr = self.parse_identifier_expression()?;
+        group_by_exprs.push(expr);
+
+        if !self.consume_if_next_token_is(Token::Comma) {
+          break;
+        }
+      }
+    }
+
+    Ok(if group_by_exprs.is_empty() { None } else { Some(group_by_exprs) })
+  }
+
+  fn parse_having(&mut self) -> Result<Option<Expression>, ParserError> {
+    if self.consume_if_next_token_is(Token::Keyword(Keyword::HAVING)) {
+      let mut condition = self.parse_condition()?;
+
+      while let Some(operator) = self.parse_logical_operator() {
+        let right_condition = self.parse_condition()?;
+        condition = Expression::BinaryExpression { left: Box::new(condition), operator, right: Box::new(right_condition) };
+      }
+
+      Ok(Some(condition))
+    } else {
+      Ok(None)
+    }
+  }
+
+  fn parse_order_direction(&mut self) -> Result<ast::Order, ParserError> {
+    match self.tokenizer.peek() {
+      Some(Token::Keyword(Keyword::ASC)) => {
+        self.tokenizer.next();
+        Ok(ast::Order::Asc)
+      }
+      Some(Token::Keyword(Keyword::DESC)) => {
+        self.tokenizer.next();
+        Ok(ast::Order::Desc)
+      }
+      _ => {
+        self.tokenizer.next();
+        Ok(ast::Order::Asc)
+      }
+    }
+  }
+
+  fn check_if_next_token_is_keyword(&mut self, keyword: Keyword) -> Result<(), ParserError> {
+    match self.tokenizer.next() {
+      Some(Token::Keyword(k)) if k == keyword => Ok(()),
+      _ => Err(ParserError::UnexpectedToken),
+    }
+  }
+
+  fn consume_if_next_token_is(&mut self, expected_token: Token) -> bool {
+    match self.tokenizer.peek() {
+      Some(token) if *token == expected_token => {
+        self.tokenizer.next();
+        true
+      }
+      _ => false,
+    }
+  }
+
+  fn parse_identifier_expression(&mut self) -> Result<Expression, ParserError> {
+    match self.tokenizer.next() {
+      Some(Token::String(name)) => Ok(Expression::Identifier(name)),
+      _ => Err(ParserError::ExpectedIdentifier),
+    }
+  }
+
+  fn parse_order_by(&mut self) -> Result<Option<Vec<(Expression, ast::Order)>>, ParserError> {
+    let mut order_by_exprs = Vec::new();
+
+    if let Some(Token::Keyword(Keyword::ORDER)) = self.tokenizer.peek() {
+      self.tokenizer.next();
+
+      self.check_if_next_token_is_keyword(Keyword::BY)?;
+      loop {
+        let expr = self.parse_identifier_expression()?;
+        let order = self.parse_order_direction()?;
+
+        order_by_exprs.push((expr, order));
+
+        if !self.consume_if_next_token_is(Token::Comma) {
+          break;
+        }
+      }
+    }
+
+    Ok(if order_by_exprs.is_empty() { None } else { Some(order_by_exprs) })
   }
 
   fn parse_select_statement(&mut self) -> Result<ast::Statement, ParserError> {
     self.tokenizer.next();
 
-    let select = self.parse_select_columns();
+    let select = self.parse_select_columns()?;
     let from = self.parse_table()?;
-
-    let where_clause = self.parse_where_clause();
-    let group_by = self.parse_group_by();
-    let having = self.parse_having();
-    let order_by = self.parse_order_by();
-    let (limit, offset) = self.parse_limit_and_offset();
+    let where_clause = self.parse_where_clause()?;
+    let group_by = self.parse_group_by()?;
+    let having = self.parse_having()?;
+    let order_by = self.parse_order_by()?;
+    let (limit, offset) = self.parse_limit_and_offset()?;
 
     Ok(ast::Statement::Select(ast::SelectStatement { select, from, where_clause, group_by, having, order_by, limit, offset }))
+  }
+
+  fn parse_ddl_statement(&mut self) -> Result<ast::Statement, ParserError> {
+    unimplemented!()
   }
 }

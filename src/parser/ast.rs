@@ -66,11 +66,8 @@ pub enum Operator {
   And,
   Or,
   Asterisk,
-  Is,
-  IsNot,
 }
 
-// I thin we will omit Predicates (joins etc, for now)
 #[derive(Debug)]
 pub struct InsertStatement {
   pub table: String,
