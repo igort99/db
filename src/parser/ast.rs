@@ -2,11 +2,66 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 
 #[derive(Debug)]
 pub enum Statement {
+  Begin,
+  Commit,
+  Rollback,
   Select(SelectStatement),
   Insert(InsertStatement),
   Update(UpdateStatement),
   Delete(DeleteStatement),
-  Transaction(Vec<Statement>),
+  CreateTable(CreateTableStatement),
+  DropTable(DropTableStatement),
+  AlterTable(AlterTableStatement),
+}
+
+#[derive(Debug)]
+pub struct CreateTableStatement {
+  pub name: Expression,
+  pub columns: Vec<ColumnDefinition>,
+}
+
+#[derive(Debug)]
+pub struct ColumnDefinition {
+  pub name: Expression,
+  pub data_type: DataType,
+  pub constraints: Vec<ColumnConstraint>,
+}
+
+#[derive(Debug)]
+pub enum DataType {
+  Int,
+  Text,
+  Date,
+  Timestamp,
+  Boolean,
+}
+
+#[derive(Debug)]
+pub enum ColumnConstraint {
+  PrimaryKey,
+  NotNull,
+  Unique,
+  Default(Expression),
+  Check(Expression),
+  ForeignKey { table: Expression, child_column: Expression, parent_column: Expression },
+}
+
+#[derive(Debug)]
+pub struct DropTableStatement {
+  pub name: Expression,
+}
+
+#[derive(Debug)]
+pub struct AlterTableStatement {
+  pub name: Expression,
+  pub operation: AlterTableOperation,
+}
+
+#[derive(Debug)]
+pub enum AlterTableOperation {
+  AddColumn(ColumnDefinition),
+  DropColumn(Expression),
+  ModifyColumn(ColumnDefinition),
 }
 
 #[derive(Debug)]
@@ -33,14 +88,14 @@ pub struct Table {
   pub alias: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
   Literal(Literal),
   Identifier(String),
   BinaryExpression { left: Box<Expression>, operator: Operator, right: Box<Expression> },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
   String(String),
   Number(f64),
@@ -51,7 +106,7 @@ pub enum Literal {
   Timestamp(DateTime<Utc>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Operator {
   Add,
   Subtract,
@@ -70,49 +125,19 @@ pub enum Operator {
 
 #[derive(Debug)]
 pub struct InsertStatement {
-  pub table: String,
-  pub columns: Vec<String>,
-  pub values: Vec<Expression>,
+  pub table: Table,
+  pub entries: Vec<(Expression, Expression)>,
 }
 
 #[derive(Debug)]
 pub struct UpdateStatement {
-  pub table: String,
-  pub assignments: Vec<(String, Expression)>,
+  pub table: Table,
+  pub entries: Vec<(Expression, Expression)>,
   pub where_clause: Option<Expression>,
 }
 
 #[derive(Debug)]
 pub struct DeleteStatement {
-  pub table: String,
+  pub table: Table,
   pub where_clause: Option<Expression>,
 }
-
-// impl Expression {
-//   pub fn walk<F: Fn(&Expression) -> bool>(&self, visitor: &F) -> bool {
-//     match self {
-//       Expression::BinaryExpression { left, operator: _, right } => visitor(self) && left.walk(visitor) && right.walk(visitor),
-//       _ => visitor(self),
-//     }
-//   }
-
-//   pub fn transform<F: FnMut(Expression) -> Result<Expression, &'static str>>(&mut self, mut f: F) -> Result<(), &'static str> {
-//     let expr = std::mem::replace(self, Expression::Literal(Literal::Number(0.0)));
-//     *self = f(expr)?;
-//     Ok(())
-//   }
-
-//   pub fn transform_tree<F: FnMut(Expression) -> Result<Expression, &'static str>>(
-//     &mut self,
-//     mut f: F,
-//   ) -> Result<(), &'static str> {
-//     match self {
-//       Expression::BinaryExpression { left, operator: _, right } => {
-//         left.transform_tree(&mut f)?;
-//         right.transform_tree(&mut f)?;
-//       }
-//       _ => {}
-//     }
-//     self.transform(f)
-//   }
-// }

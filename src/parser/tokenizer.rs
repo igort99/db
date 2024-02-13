@@ -74,22 +74,26 @@ pub enum Keyword {
   KEY,
   FOREIGN,
   COLUMN,
+  INTO,
+  INT,
+  DATE,
+  TIMESTAMP,
+  BOOLEAN,
+  NULL,
+  NOT,
+  UNIQUE,
+  REFERENCES,
+  CHECK,
+  TEXT,
+  ADD,
+  MODIFY,
+  BEGIN,
+  COMMIT,
+  ROLLBACK,
+  TRANSACTION,
 }
 
 impl Keyword {
-  // pub fn to_string(&self) -> &str {
-  //   match &self {
-  //     Self::SELECT => "SELECT",
-  //     Self::INSERT => "INSERT",
-  //     Self::FROM => "FROM",
-  //     Self::WHERE => "WHERE",
-  //     Self::AND => "AND",
-  //     Self::OR => "OR",
-  //     Self::LIMIT => "LIMIT",
-  //     Self::OFFSET => "OFFSET",
-  //   }
-  // }
-
   pub fn from_string(s: &str) -> Option<Keyword> {
     match s.to_uppercase().as_ref() {
       "SELECT" => Some(Keyword::SELECT),
@@ -109,7 +113,7 @@ impl Keyword {
       "UPDATE" => Some(Keyword::UPDATE),
       "SET" => Some(Keyword::SET),
       "DELETE" => Some(Keyword::DELETE),
-      "VAULES" => Some(Keyword::VAULES),
+      "VALUES" => Some(Keyword::VAULES),
       "CREATE" => Some(Keyword::CREATE),
       "TABLE" => Some(Keyword::TABLE),
       "ALTER" => Some(Keyword::ALTER),
@@ -118,6 +122,23 @@ impl Keyword {
       "KEY" => Some(Keyword::KEY),
       "FOREIGN" => Some(Keyword::FOREIGN),
       "COLUMN" => Some(Keyword::COLUMN),
+      "INTO" => Some(Keyword::INTO),
+      "INT" => Some(Keyword::INT),
+      "DATE" => Some(Keyword::DATE),
+      "TIMESTAMP" => Some(Keyword::TIMESTAMP),
+      "BOOLEAN" => Some(Keyword::BOOLEAN),
+      "NULL" => Some(Keyword::NULL),
+      "NOT" => Some(Keyword::NOT),
+      "UNIQUE" => Some(Keyword::UNIQUE),
+      "REFERENCES" => Some(Keyword::REFERENCES),
+      "CHECK" => Some(Keyword::CHECK),
+      "TEXT" => Some(Keyword::TEXT),
+      "ADD" => Some(Keyword::ADD),
+      "MODIFY" => Some(Keyword::MODIFY),
+      "BEGIN" => Some(Keyword::BEGIN),
+      "COMMIT" => Some(Keyword::COMMIT),
+      "ROLLBACK" => Some(Keyword::ROLLBACK),
+      "TRANSACTION" => Some(Keyword::TRANSACTION),
       _ => None,
     }
   }
@@ -218,6 +239,8 @@ impl<'a> Tokenizer<'a> {
       return Ok(self.parse_date_or_timestamp(&literal));
     }
 
+
+    // dangerous because we can wrongly parse a string as a keyword where it should be column value or name
     match string.to_uppercase().as_str() {
       "SELECT" => Ok(Token::Keyword(Keyword::SELECT)),
       "FROM" => Ok(Token::Keyword(Keyword::FROM)),
@@ -226,6 +249,26 @@ impl<'a> Tokenizer<'a> {
       "OR" => Ok(Token::Keyword(Keyword::OR)),
       "OFFSET" => Ok(Token::Keyword(Keyword::OFFSET)),
       "LIMIT" => Ok(Token::Keyword(Keyword::LIMIT)),
+      "INSERT" => Ok(Token::Keyword(Keyword::INSERT)),
+      "INTO" => Ok(Token::Keyword(Keyword::INTO)),
+      "VALUES" => Ok(Token::Keyword(Keyword::VAULES)),
+      "UPDATE" => Ok(Token::Keyword(Keyword::UPDATE)),
+      "SET" => Ok(Token::Keyword(Keyword::SET)),
+      "DELETE" => Ok(Token::Keyword(Keyword::DELETE)),
+      "CREATE" => Ok(Token::Keyword(Keyword::CREATE)),
+      "TABLE" => Ok(Token::Keyword(Keyword::TABLE)),
+      "ALTER" => Ok(Token::Keyword(Keyword::ALTER)),
+      "DROP" => Ok(Token::Keyword(Keyword::DROP)),
+      "PRIMARY" => Ok(Token::Keyword(Keyword::PRIMARY)),
+      "KEY" => Ok(Token::Keyword(Keyword::KEY)),
+      "FOREIGN" => Ok(Token::Keyword(Keyword::FOREIGN)),
+      "COLUMN" => Ok(Token::Keyword(Keyword::COLUMN)),
+      "INT" => Ok(Token::Keyword(Keyword::INT)),
+      "DATE" => Ok(Token::Keyword(Keyword::DATE)),
+      "TIMESTAMP" => Ok(Token::Keyword(Keyword::TIMESTAMP)),
+      "BOOLEAN" => Ok(Token::Keyword(Keyword::BOOLEAN)),
+      "NULL" => Ok(Token::Keyword(Keyword::NULL)),
+      "NOT" => Ok(Token::Keyword(Keyword::NOT)),
       _ => Ok(Token::String(string)),
     }
   }

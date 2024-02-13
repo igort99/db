@@ -23,9 +23,15 @@ impl<'a> Parser<'a> {
   fn parse_statement(&mut self) -> Result<ast::Statement, ParserError> {
     match self.tokenizer.peek() {
       Some(Token::Keyword(Keyword::SELECT)) => self.parse_select_statement(),
-      Some(Token::Keyword(Keyword::INSERT)) => self.parse_ddl_statement(),
-      Some(Token::Keyword(Keyword::UPDATE)) => self.parse_ddl_statement(),
-      Some(Token::Keyword(Keyword::DELETE)) => self.parse_ddl_statement(),
+      Some(Token::Keyword(Keyword::INSERT)) => self.parse_dml_statement(),
+      Some(Token::Keyword(Keyword::UPDATE)) => self.parse_dml_statement(),
+      Some(Token::Keyword(Keyword::DELETE)) => self.parse_select_statement(),
+      Some(Token::Keyword(Keyword::CREATE)) => self.parse_ddl_statement(),
+      Some(Token::Keyword(Keyword::DROP)) => self.parse_ddl_statement(),
+      Some(Token::Keyword(Keyword::ALTER)) => self.parse_ddl_statement(),
+      Some(Token::Keyword(Keyword::BEGIN)) => self.parse_transaction(),
+      Some(Token::Keyword(Keyword::COMMIT)) => self.parse_transaction(),
+      Some(Token::Keyword(Keyword::ROLLBACK)) => self.parse_transaction(),
       _ => Err(ParserError::UnexpectedToken),
     }
   }
@@ -161,25 +167,30 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn check_if_next_token_is(&mut self, keyword: Keyword) -> bool {
+  fn check_if_next_keyword_is(&mut self, keyword: Keyword) -> bool {
     match self.tokenizer.peek() {
       Some(Token::Keyword(k)) if *k == keyword => true,
       _ => false,
     }
   }
 
-  fn parse_group_by(&mut self) -> Result<Option<Vec<Expression>>, ParserError> {
+  fn parse_group_by(&mut self, select: Vec<Expression>) -> Result<Option<Vec<Expression>>, ParserError> {
     let mut group_by_exprs = Vec::new();
 
-    if self.check_if_next_token_is(Keyword::GROUP) {
+    if self.check_if_next_keyword_is(Keyword::GROUP) {
       self.tokenizer.next();
       self.check_if_next_token_is_keyword(Keyword::BY)?;
 
       loop {
         let expr = self.parse_identifier_expression()?;
+
+        if !select.contains(&expr) {
+          return Err(ParserError::UnexpectedToken); // should be in select and if not throw that kind of erro
+        }
+
         group_by_exprs.push(expr);
 
-        if !self.consume_if_next_token_is(Token::Comma) {
+        if !self.peek_check_if_next_token_is(Token::Comma) {
           break;
         }
       }
@@ -189,7 +200,7 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_having(&mut self) -> Result<Option<Expression>, ParserError> {
-    if self.consume_if_next_token_is(Token::Keyword(Keyword::HAVING)) {
+    if self.peek_check_if_next_token_is(Token::Keyword(Keyword::HAVING)) {
       let mut condition = self.parse_condition()?;
 
       while let Some(operator) = self.parse_logical_operator() {
@@ -227,7 +238,7 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn consume_if_next_token_is(&mut self, expected_token: Token) -> bool {
+  fn peek_check_if_next_token_is(&mut self, expected_token: Token) -> bool {
     match self.tokenizer.peek() {
       Some(token) if *token == expected_token => {
         self.tokenizer.next();
@@ -257,7 +268,7 @@ impl<'a> Parser<'a> {
 
         order_by_exprs.push((expr, order));
 
-        if !self.consume_if_next_token_is(Token::Comma) {
+        if !self.peek_check_if_next_token_is(Token::Comma) {
           break;
         }
       }
@@ -267,20 +278,289 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_select_statement(&mut self) -> Result<ast::Statement, ParserError> {
-    self.tokenizer.next();
+    let keyword = self.tokenizer.next();
 
-    let select = self.parse_select_columns()?;
-    let from = self.parse_table()?;
-    let where_clause = self.parse_where_clause()?;
-    let group_by = self.parse_group_by()?;
-    let having = self.parse_having()?;
-    let order_by = self.parse_order_by()?;
-    let (limit, offset) = self.parse_limit_and_offset()?;
+    match keyword {
+      Some(Token::Keyword(Keyword::SELECT)) => {
+        let select = self.parse_select_columns()?;
+        let from = self.parse_table()?;
+        let where_clause = self.parse_where_clause()?;
+        let group_by = self.parse_group_by(select.clone())?; // clone to check if group by is in select, maybe there is a better way to do this
+        let having = self.parse_having()?;
+        let order_by = self.parse_order_by()?;
+        let (limit, offset) = self.parse_limit_and_offset()?;
 
-    Ok(ast::Statement::Select(ast::SelectStatement { select, from, where_clause, group_by, having, order_by, limit, offset }))
+        Ok(ast::Statement::Select(ast::SelectStatement { select, from, where_clause, group_by, having, order_by, limit, offset }))
+      }
+      Some(Token::Keyword(Keyword::DELETE)) => {
+        self.check_if_next_token_is_keyword(Keyword::FROM)?;
+
+        let from = self.parse_table()?;
+        let where_clause = self.parse_where_clause()?;
+
+        Ok(ast::Statement::Delete(ast::DeleteStatement { table: from, where_clause }))
+      }
+      _ => Err(ParserError::UnexpectedToken),
+    }
+  }
+
+  fn check_if_next_token_is(&mut self, expected_token: Token) -> Result<(), ParserError> {
+    match self.tokenizer.next() {
+      Some(token) if token == expected_token => Ok(()),
+      _ => Err(ParserError::UnexpectedToken),
+    }
+  }
+
+  fn parse_entries(&mut self) -> Result<Vec<(Expression, Expression)>, ParserError> {
+    let mut entries = Vec::new();
+    self.peek_check_if_next_token_is(Token::OpenParen);
+
+    let columns = self.parse_intos()?;
+    let values = self.parse_values()?;
+
+    for i in 0..columns.len() {
+      entries.push((columns[i].clone(), values[i].clone()));
+    }
+
+    Ok(entries)
+  }
+
+  fn parse_values(&mut self) -> Result<Vec<Expression>, ParserError> {
+    let mut values = Vec::new();
+
+    self.check_if_next_token_is_keyword(Keyword::VAULES)?;
+    self.check_if_next_token_is(Token::OpenParen)?;
+
+    loop {
+      let token = self.tokenizer.next().ok_or(ParserError::UnexpectedEndOfStream)?;
+      let literal = self.parse_literal(token)?;
+      values.push(Expression::Literal(literal));
+
+      if !self.peek_check_if_next_token_is(Token::Comma) {
+        break;
+      }
+    }
+
+    self.check_if_next_token_is(Token::CloseParen)?;
+
+    Ok(values)
+  }
+
+  fn parse_intos(&mut self) -> Result<Vec<Expression>, ParserError> {
+    let mut intos = Vec::new();
+
+    loop {
+      let token = self.parse_identifier_expression()?;
+      intos.push(token);
+
+      if !self.peek_check_if_next_token_is(Token::Comma) {
+        break;
+      }
+    }
+
+    self.check_if_next_token_is(Token::CloseParen)?;
+
+    Ok(intos)
+  }
+
+  fn parse_set(&mut self) -> Result<Vec<(Expression, Expression)>, ParserError> {
+    let mut entries = Vec::new();
+
+    self.check_if_next_token_is_keyword(Keyword::SET)?;
+
+    loop {
+      let column = self.parse_identifier_expression()?;
+      self.check_if_next_token_is(Token::Equal)?;
+
+      let token = self.tokenizer.next().ok_or(ParserError::UnexpectedEndOfStream)?;
+      let literal = self.parse_literal(token)?;
+
+      entries.push((column, Expression::Literal(literal)));
+
+      if !self.peek_check_if_next_token_is(Token::Comma) {
+        break;
+      }
+    }
+
+    Ok(entries)
+  }
+
+  fn parse_dml_statement(&mut self) -> Result<ast::Statement, ParserError> {
+    let keyword = self.tokenizer.next();
+
+    match keyword {
+      Some(Token::Keyword(Keyword::INSERT)) => {
+        self.check_if_next_token_is_keyword(Keyword::INTO)?;
+
+        let table = self.parse_table()?;
+        let entries = self.parse_entries()?;
+
+        Ok(ast::Statement::Insert(ast::InsertStatement { table, entries }))
+      }
+      Some(Token::Keyword(Keyword::UPDATE)) => {
+        let table = self.parse_table()?;
+        let entries = self.parse_set()?;
+        let where_clause = self.parse_where_clause()?;
+
+        Ok(ast::Statement::Update(ast::UpdateStatement { table, entries, where_clause }))
+      }
+      _ => Err(ParserError::UnexpectedToken),
+    }
+  }
+
+  fn parse_create_table_statement(&mut self) -> Result<ast::CreateTableStatement, ParserError> {
+    let name = self.parse_identifier_expression()?;
+    self.check_if_next_token_is(Token::OpenParen)?;
+
+    let mut columns = Vec::new();
+    loop {
+      let column = self.parse_column_definition()?;
+      columns.push(column);
+
+      if !self.peek_check_if_next_token_is(Token::Comma) {
+        break;
+      }
+    }
+
+    self.check_if_next_token_is(Token::CloseParen)?;
+
+    Ok(ast::CreateTableStatement { name, columns })
+  }
+
+  fn parse_column_definition(&mut self) -> Result<ast::ColumnDefinition, ParserError> {
+    let name = self.parse_identifier_expression()?;
+    let data_type = self.parse_data_type()?;
+
+    let mut constraints = Vec::new();
+    loop {
+      if let Some(constraint) = self.parse_column_constraint()? {
+        constraints.push(constraint);
+      } else {
+        break;
+      }
+    }
+
+    Ok(ast::ColumnDefinition { name, data_type, constraints })
+  }
+
+  fn parse_column_constraint(&mut self) -> Result<Option<ast::ColumnConstraint>, ParserError> {
+    match self.tokenizer.peek() {
+      Some(Token::Keyword(Keyword::PRIMARY)) => {
+        self.tokenizer.next();
+        self.check_if_next_token_is_keyword(Keyword::KEY)?;
+
+        Ok(Some(ast::ColumnConstraint::PrimaryKey))
+      }
+      Some(Token::Keyword(Keyword::NOT)) => {
+        self.tokenizer.next();
+        self.check_if_next_token_is(Token::Null)?;
+
+        Ok(Some(ast::ColumnConstraint::NotNull))
+      }
+      Some(Token::Keyword(Keyword::UNIQUE)) => {
+        self.tokenizer.next();
+
+        Ok(Some(ast::ColumnConstraint::Unique))
+      }
+      Some(Token::Keyword(Keyword::CHECK)) => {
+        self.tokenizer.next();
+        let condition = self.parse_condition()?;
+
+        Ok(Some(ast::ColumnConstraint::Check(condition)))
+      }
+      Some(Token::Keyword(Keyword::FOREIGN)) => {
+        self.tokenizer.next();
+        self.check_if_next_token_is_keyword(Keyword::KEY)?;
+        self.check_if_next_token_is(Token::OpenParen)?;
+
+        let child_column = self.parse_identifier_expression()?;
+
+        self.check_if_next_token_is(Token::CloseParen)?;
+        self.check_if_next_token_is_keyword(Keyword::REFERENCES)?;
+
+        let parent_table = self.parse_identifier_expression()?;
+
+        self.check_if_next_token_is(Token::OpenParen)?;
+
+        let parent_column = self.parse_identifier_expression()?;
+        self.check_if_next_token_is(Token::CloseParen)?;
+
+        Ok(Some(ast::ColumnConstraint::ForeignKey { table: parent_table, child_column, parent_column }))
+      }
+      _ => Ok(None),
+    }
+  }
+
+  fn parse_data_type(&mut self) -> Result<ast::DataType, ParserError> {
+    match self.tokenizer.next() {
+      Some(Token::Keyword(Keyword::INT)) => Ok(ast::DataType::Int),
+      Some(Token::Keyword(Keyword::TEXT)) => Ok(ast::DataType::Text),
+      Some(Token::Keyword(Keyword::DATE)) => Ok(ast::DataType::Date),
+      Some(Token::Keyword(Keyword::TIMESTAMP)) => Ok(ast::DataType::Timestamp),
+      Some(Token::Keyword(Keyword::BOOLEAN)) => Ok(ast::DataType::Boolean),
+      _ => Err(ParserError::UnexpectedToken),
+    }
+  }
+
+  fn parse_alter_table_operation(&mut self) -> Result<ast::AlterTableOperation, ParserError> {
+    match self.tokenizer.next() {
+      Some(Token::Keyword(Keyword::ADD)) => {
+        self.check_if_next_token_is_keyword(Keyword::COLUMN)?;
+        let column = self.parse_column_definition()?;
+
+        Ok(ast::AlterTableOperation::AddColumn(column))
+      }
+      Some(Token::Keyword(Keyword::DROP)) => {
+        self.check_if_next_token_is_keyword(Keyword::COLUMN)?;
+        let column = self.parse_identifier_expression()?;
+
+        Ok(ast::AlterTableOperation::DropColumn(column))
+      }
+      Some(Token::Keyword(Keyword::MODIFY)) => {
+        self.check_if_next_token_is_keyword(Keyword::COLUMN)?;
+        let column = self.parse_column_definition()?;
+
+        Ok(ast::AlterTableOperation::ModifyColumn(column))
+      }
+      _ => Err(ParserError::UnexpectedToken),
+    }
   }
 
   fn parse_ddl_statement(&mut self) -> Result<ast::Statement, ParserError> {
-    unimplemented!()
+    let keyword = self.tokenizer.next();
+    self.check_if_next_token_is_keyword(Keyword::TABLE)?;
+
+    match keyword {
+      Some(Token::Keyword(Keyword::CREATE)) => {
+        let statement = self.parse_create_table_statement()?;
+        Ok(ast::Statement::CreateTable(statement))
+      }
+      Some(Token::Keyword(Keyword::DROP)) => {
+        let name = self.parse_identifier_expression()?;
+
+        Ok(ast::Statement::DropTable(ast::DropTableStatement { name }))
+      }
+      Some(Token::Keyword(Keyword::ALTER)) => {
+        let name = self.parse_identifier_expression()?;
+        let operation = self.parse_alter_table_operation()?;
+
+        Ok(ast::Statement::AlterTable(ast::AlterTableStatement { name, operation }))
+      }
+      _ => Err(ParserError::UnexpectedToken),
+    }
+  }
+
+  fn parse_transaction(&mut self) -> Result<ast::Statement, ParserError> {
+    let keyword = self.tokenizer.next();
+
+    match keyword {
+      Some(Token::Keyword(Keyword::BEGIN)) => {
+        self.check_if_next_token_is_keyword(Keyword::TRANSACTION)?;
+        Ok(ast::Statement::Begin)
+      }
+      Some(Token::Keyword(Keyword::COMMIT)) => Ok(ast::Statement::Commit),
+      Some(Token::Keyword(Keyword::ROLLBACK)) => Ok(ast::Statement::Rollback),
+      _ => Err(ParserError::UnexpectedToken),
+    }
   }
 }
