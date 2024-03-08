@@ -1,4 +1,4 @@
-pub mod parser;
+pub mod sql;
 // fn main() {
 //   // let input = "SELECT age, name FROM table WHERE adult = 'yes' and 
 //   // year = '2012-01-22' and is_emigrant = true and name = null 
@@ -42,12 +42,16 @@ fn main() {
             break;
         }
 
-        let mut parser = parser::Parser::new(&input);
+        let mut parser = sql::parser::Parser::new(&input);
         let statement = parser.parse();
         
-        match statement {
-            Ok(statement) => println!("{:?}", statement),
-            Err(e) => println!("Error: {}", e),  
-        }
+        // match statement {
+        //     Ok(statement) => println!("{:?}", statement),
+        //     Err(e) => println!("Error: {}", e),  
+        // }
+
+        let plan = sql::planner::plan::Planner::new().build(statement.unwrap());
+
+        println!("{:?}", plan);
     }
 }

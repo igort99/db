@@ -2,7 +2,7 @@ use ast::{Expression, Literal, Operator};
 use error::ParserError;
 use tokenizer::{Keyword, Token, Tokenizer};
 
-mod ast;
+pub mod ast;
 mod error;
 mod tokenizer;
 
