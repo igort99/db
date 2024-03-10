@@ -2,22 +2,50 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 
 #[derive(Debug)]
 pub enum Statement {
+  // INFO: Transaction control
   Begin,
   Commit,
   Rollback,
-  Select(SelectStatement),
-  Insert(InsertStatement),
-  Update(UpdateStatement),
-  Delete(DeleteStatement),
-  CreateTable(CreateTableStatement),
-  DropTable(DropTableStatement),
-  AlterTable(AlterTableStatement),
-}
 
-#[derive(Debug)]
-pub struct CreateTableStatement {
-  pub name: Expression,
-  pub columns: Vec<ColumnDefinition>,
+  // INFO: Query
+  Select {
+    from: Table,
+    select: Vec<Expression>,
+    where_clause: Option<Expression>,
+    group_by: Option<Vec<Expression>>,
+    having: Option<Expression>,
+    order_by: Option<Vec<(Expression, Order)>>,
+    limit: Option<Expression>,
+    offset: Option<Expression>,
+  },
+
+  // INFO: DMLs
+  Insert {
+    table: Table,
+    entries: Vec<(Expression, Expression)>,
+  },
+  Update {
+    table: Table,
+    entries: Vec<(Expression, Expression)>,
+    where_clause: Option<Expression>,
+  },
+  Delete {
+    table: Table,
+    where_clause: Option<Expression>,
+  },
+
+  // INFO: DDLs
+  CreateTable {
+    name: Expression,
+    columns: Vec<ColumnDefinition>,
+  },
+  DropTable {
+    name: Expression,
+  },
+  AlterTable {
+    name: Expression,
+    operation: AlterTableOperation,
+  },
 }
 
 #[derive(Debug)]
@@ -25,15 +53,6 @@ pub struct ColumnDefinition {
   pub name: Expression,
   pub data_type: DataType,
   pub constraints: Vec<ColumnConstraint>,
-}
-
-#[derive(Debug)]
-pub enum DataType {
-  Int,
-  Text,
-  Date,
-  Timestamp,
-  Boolean,
 }
 
 #[derive(Debug)]
@@ -47,14 +66,12 @@ pub enum ColumnConstraint {
 }
 
 #[derive(Debug)]
-pub struct DropTableStatement {
-  pub name: Expression,
-}
-
-#[derive(Debug)]
-pub struct AlterTableStatement {
-  pub name: Expression,
-  pub operation: AlterTableOperation,
+pub enum DataType {
+  Int,
+  Text,
+  Date,
+  Timestamp,
+  Boolean,
 }
 
 #[derive(Debug)]
@@ -62,18 +79,6 @@ pub enum AlterTableOperation {
   AddColumn(ColumnDefinition),
   DropColumn(Expression),
   ModifyColumn(ColumnDefinition),
-}
-
-#[derive(Debug)]
-pub struct SelectStatement {
-  pub from: Table,
-  pub select: Vec<Expression>,
-  pub where_clause: Option<Expression>,
-  pub group_by: Option<Vec<Expression>>,
-  pub having: Option<Expression>,
-  pub order_by: Option<Vec<(Expression, Order)>>,
-  pub limit: Option<Expression>,
-  pub offset: Option<Expression>,
 }
 
 #[derive(Debug)]
@@ -87,6 +92,12 @@ pub struct Table {
   pub name: String,
   pub alias: Option<String>,
 }
+
+// #[derive(Debug)]
+// pub struct Table {
+//   pub name: Expression,
+//   pub alias: Option<Expression>,
+// }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
@@ -121,23 +132,4 @@ pub enum Operator {
   And,
   Or,
   Asterisk,
-}
-
-#[derive(Debug)]
-pub struct InsertStatement {
-  pub table: Table,
-  pub entries: Vec<(Expression, Expression)>,
-}
-
-#[derive(Debug)]
-pub struct UpdateStatement {
-  pub table: Table,
-  pub entries: Vec<(Expression, Expression)>,
-  pub where_clause: Option<Expression>,
-}
-
-#[derive(Debug)]
-pub struct DeleteStatement {
-  pub table: Table,
-  pub where_clause: Option<Expression>,
 }

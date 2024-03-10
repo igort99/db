@@ -1,3 +1,4 @@
+#![allow(unused)]
 use super::parser::ast::Table as TableAst;
 
 // TODO: So when we set create table query we need to create table in schema/catalog

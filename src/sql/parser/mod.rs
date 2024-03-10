@@ -1,6 +1,6 @@
-use ast::{Expression, Literal, Operator};
-use error::ParserError;
+use ast::{Expression, Literal, Operator, ColumnDefinition};
 use tokenizer::{Keyword, Token, Tokenizer};
+use error::ParserError;
 
 pub mod ast;
 mod error;
@@ -22,13 +22,20 @@ impl<'a> Parser<'a> {
 
   fn parse_statement(&mut self) -> Result<ast::Statement, ParserError> {
     match self.tokenizer.peek() {
+      // Queries
       Some(Token::Keyword(Keyword::SELECT)) => self.parse_select_statement(),
+
+      // DML
       Some(Token::Keyword(Keyword::INSERT)) => self.parse_dml_statement(),
       Some(Token::Keyword(Keyword::UPDATE)) => self.parse_dml_statement(),
-      Some(Token::Keyword(Keyword::DELETE)) => self.parse_select_statement(),
+      Some(Token::Keyword(Keyword::DELETE)) => self.parse_select_statement(), // TODO: maybe refactor this to parse_dml_statement but now it utilizes the same parse_where_clause
+
+      // DDL
       Some(Token::Keyword(Keyword::CREATE)) => self.parse_ddl_statement(),
       Some(Token::Keyword(Keyword::DROP)) => self.parse_ddl_statement(),
       Some(Token::Keyword(Keyword::ALTER)) => self.parse_ddl_statement(),
+
+      // Transactions
       Some(Token::Keyword(Keyword::BEGIN)) => self.parse_transaction(),
       Some(Token::Keyword(Keyword::COMMIT)) => self.parse_transaction(),
       Some(Token::Keyword(Keyword::ROLLBACK)) => self.parse_transaction(),
@@ -67,6 +74,8 @@ impl<'a> Parser<'a> {
       Token::String(name) => Ok(ast::Table { name, alias: None }),
       _ => Err(ParserError::ExpectedIdentifier),
     }
+    // let token = self.parse_identifier_expression()?;
+    // Ok(ast::Table { name: token, alias: None })
   }
 
   fn parse_where_clause(&mut self) -> Result<Option<Expression>, ParserError> {
@@ -290,7 +299,7 @@ impl<'a> Parser<'a> {
         let order_by = self.parse_order_by()?;
         let (limit, offset) = self.parse_limit_and_offset()?;
 
-        Ok(ast::Statement::Select(ast::SelectStatement { select, from, where_clause, group_by, having, order_by, limit, offset }))
+        Ok(ast::Statement::Select { select, from, where_clause, group_by, having, order_by, limit, offset })
       }
       Some(Token::Keyword(Keyword::DELETE)) => {
         self.check_if_next_token_is_keyword(Keyword::FROM)?;
@@ -298,7 +307,7 @@ impl<'a> Parser<'a> {
         let from = self.parse_table()?;
         let where_clause = self.parse_where_clause()?;
 
-        Ok(ast::Statement::Delete(ast::DeleteStatement { table: from, where_clause }))
+        Ok(ast::Statement::Delete { table: from, where_clause })
       }
       _ => Err(ParserError::UnexpectedToken),
     }
@@ -395,20 +404,20 @@ impl<'a> Parser<'a> {
         let table = self.parse_table()?;
         let entries = self.parse_entries()?;
 
-        Ok(ast::Statement::Insert(ast::InsertStatement { table, entries }))
+        Ok(ast::Statement::Insert { table, entries })
       }
       Some(Token::Keyword(Keyword::UPDATE)) => {
         let table = self.parse_table()?;
         let entries = self.parse_set()?;
         let where_clause = self.parse_where_clause()?;
 
-        Ok(ast::Statement::Update(ast::UpdateStatement { table, entries, where_clause }))
+        Ok(ast::Statement::Update { table, entries, where_clause })
       }
       _ => Err(ParserError::UnexpectedToken),
     }
   }
 
-  fn parse_create_table_statement(&mut self) -> Result<ast::CreateTableStatement, ParserError> {
+  fn parse_create_table_statement(&mut self) -> Result<(Expression, Vec<ColumnDefinition>), ParserError> {
     let name = self.parse_identifier_expression()?;
     self.check_if_next_token_is(Token::OpenParen)?;
 
@@ -424,7 +433,7 @@ impl<'a> Parser<'a> {
 
     self.check_if_next_token_is(Token::CloseParen)?;
 
-    Ok(ast::CreateTableStatement { name, columns })
+    Ok((name, columns))
   }
 
   fn parse_column_definition(&mut self) -> Result<ast::ColumnDefinition, ParserError> {
@@ -532,19 +541,19 @@ impl<'a> Parser<'a> {
 
     match keyword {
       Some(Token::Keyword(Keyword::CREATE)) => {
-        let statement = self.parse_create_table_statement()?;
-        Ok(ast::Statement::CreateTable(statement))
+        let (name, columns) = self.parse_create_table_statement()?;
+        Ok(ast::Statement::CreateTable { name, columns })
       }
       Some(Token::Keyword(Keyword::DROP)) => {
         let name = self.parse_identifier_expression()?;
 
-        Ok(ast::Statement::DropTable(ast::DropTableStatement { name }))
+        Ok(ast::Statement::DropTable { name })
       }
       Some(Token::Keyword(Keyword::ALTER)) => {
         let name = self.parse_identifier_expression()?;
         let operation = self.parse_alter_table_operation()?;
 
-        Ok(ast::Statement::AlterTable(ast::AlterTableStatement { name, operation }))
+        Ok(ast::Statement::AlterTable { name, operation })
       }
       _ => Err(ParserError::UnexpectedToken),
     }

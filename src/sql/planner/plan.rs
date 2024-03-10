@@ -2,9 +2,11 @@
 //       Planer needs to decide based on AST Statement what it needs to do with the table
 //       It needs to decide if it needs to create table, insert, update, delete, select, alter table, drop table
 //       But everything plays around get/update/create data and schema, so everything is encapsulated in schema
+#![allow(unused)]
+use std::vec;
 
 use crate::sql::{
-  parser::ast::{self, CreateTableStatement, SelectStatement},
+  parser::ast::{self, AlterTableOperation, Statement},
   schema::{Column, DataType, Table},
 };
 
@@ -13,7 +15,58 @@ pub struct Plan(pub Node);
 
 #[derive(Debug)]
 pub enum Node {
+  // DDl sts
   CreateTable { schema: Table },
+  DropTable { table: String },
+  AlterTable { table: String, values: Vec<(Expression, Expression)> },
+
+  // Insert sts
+  Insert { table: String, values: Vec<(Expression, Expression)> },
+  Update { table: String, values: Vec<(Expression, Expression)> },
+  Delete { table: String },
+
+  // Select sts
+  Limit { source: Box<Node>, limit: Expression },
+  Offset { source: Box<Node>, offset: Expression },
+  Projection { source: Box<Node>, columns: Vec<Expression> },
+  Filter { source: Box<Node>, condition: Expression },
+  GroupBy { source: Box<Node>, values: Vec<Expression> },
+  Having { source: Box<Node>, condition: Expression }, //maybe this ca go to filter
+
+  Scan { table: String, alias: Option<String> },
+  IndexLookup { table: String, alias: Option<String>, index: String },
+  NestedLoopJoin { left: Box<Node>, right: Box<Node>, condition: Expression },
+  HashJoin { left: Box<Node>, right: Box<Node>, condition: Expression },
+  Sort { source: Box<Node>, order: Vec<(Expression, bool)> },
+}
+
+#[derive(Debug)]
+pub enum Expression {
+  Identifier(String),
+  Constant(Value),
+  DataType(DataType),
+
+  Equal(Box<Expression>, Box<Expression>),
+  NotEqual(Box<Expression>, Box<Expression>),
+  GreaterThan(Box<Expression>, Box<Expression>),
+  GreaterThanOrEqual(Box<Expression>, Box<Expression>),
+
+  Add(Box<Expression>, Box<Expression>),
+  Subtract(Box<Expression>, Box<Expression>),
+  Multiply(Box<Expression>, Box<Expression>),
+  Divide(Box<Expression>, Box<Expression>),
+
+  And(Box<Expression>, Box<Expression>),
+  Or(Box<Expression>, Box<Expression>),
+}
+
+#[derive(Debug)]
+pub enum Value {
+  Int(i64),
+  Float(f64),
+  Text(String),
+  Boolean(bool),
+  Null,
 }
 
 #[derive(Debug)]
@@ -33,18 +86,111 @@ impl Planner {
 
   fn bind(&mut self, statement: ast::Statement) -> Node {
     match statement {
-      ast::Statement::CreateTable(create_table_statement) => {
-        let CreateTableStatement { name, columns } = create_table_statement;
+      ast::Statement::Begin { .. } | ast::Statement::Commit | ast::Statement::Rollback => {
+        panic!("Transaction not supported yet in this point in code")
+      }
+      ast::Statement::CreateTable { name, columns } => {
         let columns = columns.into_iter().map(column_definition_to_column).collect();
         let name = parse_identifier(name);
 
         Node::CreateTable { schema: Table::new(name, columns) }
       }
-      ast::Statement::Select(select_statement) => {
-        let SelectStatement { from, select, where_clause, group_by, having, order_by, limit, offset } = select_statement;
+      ast::Statement::DropTable { name } => Node::DropTable { table: parse_identifier(name) },
+      ast::Statement::AlterTable { name, operation } => {
+        let table = parse_identifier(name);
+        let values = match operation {
+          AlterTableOperation::AddColumn(column) => {
+            let column_name = parse_identifier(column.name);
+            let column_type = data_type_to_primitive(column.data_type);
+
+            vec![(Expression::Identifier(column_name), Expression::DataType(column_type))]
+          }
+          AlterTableOperation::DropColumn(column) => {
+            vec![(Expression::Identifier(parse_identifier(column)), Expression::Identifier("".to_string()))]
+          }
+          AlterTableOperation::ModifyColumn(column) => {
+            let column_name = parse_identifier(column.name);
+            let column_type = data_type_to_primitive(column.data_type);
+
+            vec![(Expression::Identifier(column_name), Expression::DataType(column_type))]
+          }
+        };
+
+        Node::AlterTable { table, values }
+      }
+      ast::Statement::Insert { table, entries } => {
+        let values: Vec<(Expression, Expression)> =
+          entries.into_iter().map(|(name, value)| (expr_to_expression(name), expr_to_expression(value))).collect();
+
+        Node::Insert { table: table.name, values }
+      }
+      ast::Statement::Update { table, entries, where_clause } => {
+        let values: Vec<(Expression, Expression)> =
+          entries.into_iter().map(|(name, value)| (expr_to_expression(name), expr_to_expression(value))).collect();
+
+        let mut node = Node::Update { table: table.name, values };
+
+        if let Some(condition) = where_clause.map(expr_to_expression) {
+          node = Node::Filter { source: Box::new(node), condition };
+        }
+
+        node
+      }
+      ast::Statement::Delete { table, where_clause } => {
+        let mut node = Node::Delete { table: table.name };
+
+        if let Some(condition) = where_clause.map(expr_to_expression) {
+          node = Node::Filter { source: Box::new(node), condition };
+        }
+
+        node
+      }
+      ast::Statement::Select { from, select, where_clause, group_by, having, order_by, limit, offset } => {
+        let mut node = Node::Scan { table: from.name, alias: from.alias };
+
+        if let Some(condition) = where_clause.map(expr_to_expression) {
+          node = Node::Filter { source: Box::new(node), condition };
+        } // add checks for joins and indexes
+
+        if let Some(limit) = limit {
+          node = Node::Limit { source: Box::new(node), limit: expr_to_expression(limit) };
+        }
+
+        if let Some(offset) = offset {
+          node = Node::Offset { source: Box::new(node), offset: expr_to_expression(offset) };
+        }
+
+        node = Node::Projection { source: Box::new(node), columns: select.into_iter().map(expr_to_expression).collect() };
+
+        node
       }
       _ => unimplemented!(),
     }
+  }
+}
+
+fn expr_to_expression(expr: ast::Expression) -> Expression {
+  match expr {
+    ast::Expression::Identifier(name) => Expression::Identifier(name),
+    ast::Expression::Literal(literal) => Expression::Constant(literal_to_value(literal).unwrap()),
+    ast::Expression::BinaryExpression { left, operator, right } => binary_operator_to_expression(operator, *left, *right),
+    _ => unimplemented!(),
+  }
+}
+
+fn binary_operator_to_expression(operator: ast::Operator, left: ast::Expression, right: ast::Expression) -> Expression {
+  match operator {
+    ast::Operator::Equal => Expression::Equal(Box::new(expr_to_expression(left)), Box::new(expr_to_expression(right))),
+    ast::Operator::NotEqual => Expression::NotEqual(Box::new(expr_to_expression(left)), Box::new(expr_to_expression(right))),
+    ast::Operator::GreaterThan => {
+      Expression::GreaterThan(Box::new(expr_to_expression(left)), Box::new(expr_to_expression(right)))
+    }
+    ast::Operator::GreaterThanOrEqual => {
+      Expression::GreaterThanOrEqual(Box::new(expr_to_expression(left)), Box::new(expr_to_expression(right)))
+    }
+    ast::Operator::And => Expression::And(Box::new(expr_to_expression(left)), Box::new(expr_to_expression(right))),
+    ast::Operator::Or => Expression::Or(Box::new(expr_to_expression(left)), Box::new(expr_to_expression(right))),
+    _ => unimplemented!(),
   }
 }
 
@@ -64,11 +210,12 @@ fn data_type_to_primitive(data_type: ast::DataType) -> DataType {
   }
 }
 
-fn literal_to_value(literal: ast::Literal) -> Option<crate::sql::schema::Value> {
+fn literal_to_value(literal: ast::Literal) -> Option<Value> {
   match literal {
-    ast::Literal::Number(value) => Some(crate::sql::schema::Value::Float(value)),
-    ast::Literal::String(value) => Some(crate::sql::schema::Value::Text(value)),
-    ast::Literal::Boolean(value) => Some(crate::sql::schema::Value::Boolean(value)),
+    ast::Literal::Number(value) => Some(Value::Float(value)),
+    ast::Literal::String(value) => Some(Value::Text(value)),
+    ast::Literal::Boolean(value) => Some(Value::Boolean(value)),
+    ast::Literal::Null => Some(Value::Null),
     _ => None,
   }
 }
