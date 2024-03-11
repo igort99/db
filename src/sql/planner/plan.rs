@@ -6,14 +6,14 @@
 use std::vec;
 
 use crate::sql::{
+  catalog::catalog::{Column, DataType, Table},
   parser::ast::{self, AlterTableOperation, Statement},
-  schema::{Column, DataType, Table},
 };
 
 #[derive(Debug)]
 pub struct Plan(pub Node);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Node {
   // DDl sts
   CreateTable { schema: Table },
@@ -33,14 +33,55 @@ pub enum Node {
   GroupBy { source: Box<Node>, values: Vec<Expression> },
   Having { source: Box<Node>, condition: Expression }, //maybe this ca go to filter
 
-  Scan { table: String, alias: Option<String> },
+  Scan { table: String, alias: Option<String>, filter: Option<Expression> },
+
+  // Needs implementation
   IndexLookup { table: String, alias: Option<String>, index: String },
   NestedLoopJoin { left: Box<Node>, right: Box<Node>, condition: Expression },
   HashJoin { left: Box<Node>, right: Box<Node>, condition: Expression },
   Sort { source: Box<Node>, order: Vec<(Expression, bool)> },
 }
 
-#[derive(Debug)]
+impl Node {
+  pub fn get_table(&self) -> Option<&String> {
+    match self {
+      Node::CreateTable { schema } => Some(&schema.name),
+      Node::DropTable { table } => Some(table),
+      Node::AlterTable { table, .. } => Some(table),
+      Node::Insert { table, .. } => Some(table),
+      Node::Update { table, .. } => Some(table),
+      Node::Delete { table } => Some(table),
+      Node::Scan { table, .. } => Some(table),
+      _ => None,
+    }
+  }
+
+  pub fn tranverse(&self) -> Vec<&Node> {
+    let mut nodes = vec![self];
+
+    match self {
+      Node::CreateTable { .. }
+      | Node::DropTable { .. }
+      | Node::AlterTable { .. }
+      | Node::Insert { .. }
+      | Node::Update { .. }
+      | Node::Delete { .. }
+      | Node::Scan { .. } => nodes,
+      Node::Limit { source, .. }
+      | Node::Offset { source, .. }
+      | Node::Projection { source, .. }
+      | Node::Filter { source, .. }
+      | Node::GroupBy { source, .. }
+      | Node::Having { source, .. } => {
+        nodes.push(source);
+        nodes
+      }
+      _ => unimplemented!(),
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
 pub enum Expression {
   Identifier(String),
   Constant(Value),
@@ -60,7 +101,7 @@ pub enum Expression {
   Or(Box<Expression>, Box<Expression>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
   Int(i64),
   Float(f64),
@@ -90,7 +131,14 @@ impl Planner {
         panic!("Transaction not supported yet in this point in code")
       }
       ast::Statement::CreateTable { name, columns } => {
-        let columns = columns.into_iter().map(column_definition_to_column).collect();
+        let columns = columns
+        .into_iter()
+        .map(|column| {
+            let name = parse_identifier(column.name.clone());
+            (name, column_definition_to_column(column))
+        })
+        .collect();
+
         let name = parse_identifier(name);
 
         Node::CreateTable { schema: Table::new(name, columns) }
@@ -146,7 +194,7 @@ impl Planner {
         node
       }
       ast::Statement::Select { from, select, where_clause, group_by, having, order_by, limit, offset } => {
-        let mut node = Node::Scan { table: from.name, alias: from.alias };
+        let mut node = Node::Scan { table: from.name, alias: from.alias, filter: None };
 
         if let Some(condition) = where_clause.map(expr_to_expression) {
           node = Node::Filter { source: Box::new(node), condition };
@@ -203,9 +251,9 @@ fn parse_identifier(expr: ast::Expression) -> String {
 
 fn data_type_to_primitive(data_type: ast::DataType) -> DataType {
   match data_type {
-    ast::DataType::Int => crate::sql::schema::DataType::Int,
-    ast::DataType::Text => crate::sql::schema::DataType::Text,
-    ast::DataType::Boolean => crate::sql::schema::DataType::Boolean,
+    ast::DataType::Int => crate::sql::catalog::catalog::DataType::Int,
+    ast::DataType::Text => crate::sql::catalog::catalog::DataType::Text,
+    ast::DataType::Boolean => crate::sql::catalog::catalog::DataType::Boolean,
     _ => unimplemented!(),
   }
 }
@@ -224,7 +272,7 @@ pub fn column_definition_to_column(column_definition: ast::ColumnDefinition) -> 
   let ast::ColumnDefinition { name, data_type, constraints } = column_definition;
 
   Column {
-    id: 0,                        // i need id checkups and autoincrement
+    // i need id checkups and autoincrement
     name: parse_identifier(name), // check if it is unique on the table and if not throw error
     data_type: data_type_to_primitive(data_type),
     value: None,
@@ -236,5 +284,5 @@ pub fn column_definition_to_column(column_definition: ast::ColumnDefinition) -> 
 }
 
 pub fn get_column_by_name<'a>(table: &'a Table, name: &'a str) -> Option<&'a Column> {
-  table.columns.iter().find(|column| column.name == name)
+  table.columns.iter().find(|(column_name, _)| *column_name == name).map(|(_, column)| column)
 }

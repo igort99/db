@@ -48,14 +48,14 @@ pub enum Statement {
   },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ColumnDefinition {
   pub name: Expression,
   pub data_type: DataType,
   pub constraints: Vec<ColumnConstraint>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ColumnConstraint {
   PrimaryKey,
   NotNull,
@@ -65,7 +65,7 @@ pub enum ColumnConstraint {
   ForeignKey { table: Expression, child_column: Expression, parent_column: Expression },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DataType {
   Int,
   Text,
@@ -92,12 +92,6 @@ pub struct Table {
   pub name: String,
   pub alias: Option<String>,
 }
-
-// #[derive(Debug)]
-// pub struct Table {
-//   pub name: Expression,
-//   pub alias: Option<Expression>,
-// }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
