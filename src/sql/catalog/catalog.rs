@@ -1,14 +1,5 @@
-#[warn(unused_imports)]
-use bincode;
 use serde_derive::{Deserialize, Serialize};
-use std::{
-  collections::HashMap,
-  fs::File,
-  io::{self, Read, Write},
-  path::Path,
-};
-
-use crate::storage::manager::StorageManager;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Catalog {
@@ -36,7 +27,9 @@ pub struct Column {
   pub nullable: bool,
   pub default: Option<String>,
   pub references: Option<Reference>,
+  // indexes: Vec<Index>,
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {
@@ -64,8 +57,9 @@ impl Catalog {
     Self { tables }
   }
 
-  pub fn add_table(&mut self, table_name: String, table_metadata: Table) {
-    self.tables.insert(table_name, table_metadata);
+  pub fn add_table(&mut self, table: Table) {
+    let table_name = table.name.clone();
+    self.tables.insert(table_name, table);
   }
 
   pub fn get_table(&self, table_name: &str) -> Option<&Table> {

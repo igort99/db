@@ -56,32 +56,19 @@ fn main() {
     let mut optimizer = sql::optimizer::optimizer::Optimizer::new(plan);
     let physical_plan = optimizer.optimize();
     let mut storage_manager = storage::manager::StorageManager::new();
-
-    let buffer_pool = storage_manager.get_buffer_pool();
-    let mut catalog = buffer_pool.get_catalog();
+    let mut buffer_pool = storage::manager::BufferPool::new();
+    let catalog = buffer_pool.get_catalog();
     println!("{:?}", catalog);
-    // ovako treba da radi excutor samo sto ce koristiti plan a za upisivanje citanje i upsert kosristice storage manager
-    // executor mock
+
     match &physical_plan.0 {
       Node::CreateTable { schema } => {
         let table = sql::catalog::catalog::Table::new(schema.name.clone(), schema.columns.clone());
-
-        catalog.add_table(schema.name.clone(), table);
-        storage_manager.write_catalog();
-        println!("{:?}", catalog);
+        buffer_pool.add_table_to_catalog(table);
       }
-      Node::Insert { table, values } => {
-        let table_name = table.clone();
-        let table = catalog.get_table(table).unwrap();
-        // trazi se stranica sa slobodnim mestom za upis i da bude dirty ako nema daje se ona sa mestom za upis ako nema cita se sa diska i upisuje se
-        let page = buffer_pool.find_dirty_page_by_origin(table_name).unwrap();
-        // tranform Vec(Expression, Expression) to Vec(Value)
-        page.insert_values(values);
-        println!("{:?}", page);
+      Node::DropTable { table } => {
+        buffer_pool.remove_table_from_catalog(table);
       }
       _ => {}
     }
-
-    // println!("{:?}", plan_v2);
   }
 }
