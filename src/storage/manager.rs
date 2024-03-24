@@ -538,8 +538,8 @@ impl BufferPool {
     self.storage_manager.write_catalog(&self.catalog); // TODO: maybe decide when to write the catalog
   }
 
-  pub fn get_catalog(&self) -> &Catalog {
-    &self.catalog
+  pub fn get_catalog(&mut self) -> &mut Catalog {
+    &mut self.catalog
   }
 
   pub fn remove_table_from_catalog(&mut self, table_name: &str) {

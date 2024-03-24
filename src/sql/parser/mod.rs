@@ -194,7 +194,7 @@ impl<'a> Parser<'a> {
         let expr = self.parse_identifier_expression()?;
 
         if !select.contains(&expr) {
-          return Err(ParserError::UnexpectedToken); // should be in select and if not throw that kind of erro
+          return Err(ParserError::UnexpectedToken); // should be in select and if not throw that kind of error
         }
 
         group_by_exprs.push(expr);

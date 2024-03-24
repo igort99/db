@@ -49,25 +49,28 @@ fn main() {
       break;
     }
 
+    let mut storage_manager = storage::manager::StorageManager::new();
+    let mut buffer_pool = storage::manager::BufferPool::new();
+    let mut catalog = buffer_pool.get_catalog();
+
     let mut parser = sql::parser::Parser::new(&input);
     let statement = parser.parse();
 
     let plan = sql::planner::plan::Planner::new().build(statement.unwrap());
-    let mut optimizer = sql::optimizer::optimizer::Optimizer::new(plan);
+    println!("{:?}", plan);
+    let mut optimizer = sql::optimizer::optimizer::Optimizer::new(plan, catalog);
     let physical_plan = optimizer.optimize();
-    let mut storage_manager = storage::manager::StorageManager::new();
-    let mut buffer_pool = storage::manager::BufferPool::new();
-    let catalog = buffer_pool.get_catalog();
-    println!("{:?}", catalog);
+    println!("{:?}", physical_plan);
+    // println!("{:?}", catalog);
 
     match &physical_plan.0 {
       Node::CreateTable { schema } => {
         let table = sql::catalog::catalog::Table::new(schema.name.clone(), schema.columns.clone());
         buffer_pool.add_table_to_catalog(table);
       }
-      Node::DropTable { table } => {
-        buffer_pool.remove_table_from_catalog(table);
-      }
+      // Node::DropTable { table } => {
+      //   buffer_pool.remove_table_from_catalog(table);
+      // }
       _ => {}
     }
   }

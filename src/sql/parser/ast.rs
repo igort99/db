@@ -100,6 +100,15 @@ pub enum Expression {
   BinaryExpression { left: Box<Expression>, operator: Operator, right: Box<Expression> },
 }
 
+impl Expression {
+  pub fn parse_identifier(self) -> String {
+    match self {
+      Expression::Identifier(name) => name,
+      _ => panic!("Expression is not an Identifier"),
+    }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
   String(String),

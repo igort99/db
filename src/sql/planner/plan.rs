@@ -1,7 +1,3 @@
-// TODO: Should accept AST and plan operations. So output will be execution plan which will be input for optimizer
-//       Planer needs to decide based on AST Statement what it needs to do with the table
-//       It needs to decide if it needs to create table, insert, update, delete, select, alter table, drop table
-//       But everything plays around get/update/create data and schema, so everything is encapsulated in schema
 #![allow(unused)]
 use std::vec;
 
@@ -15,27 +11,27 @@ pub struct Plan(pub Node);
 
 #[derive(Debug, Clone)]
 pub enum Node {
-  // DDl sts
+  // INFO: DDl sts
   CreateTable { schema: Table },
   DropTable { table: String },
   AlterTable { table: String, values: Vec<(Expression, Expression)> },
 
-  // Insert sts
+  // INFO: Insert sts
   Insert { table: String, values: Vec<(Expression, Expression)> },
   Update { table: String, values: Vec<(Expression, Expression)> },
   Delete { table: String },
 
-  // Select sts
+  // INFO: Select sts
   Limit { source: Box<Node>, limit: Expression },
   Offset { source: Box<Node>, offset: Expression },
   Projection { source: Box<Node>, columns: Vec<Expression> },
   Filter { source: Box<Node>, condition: Expression },
   GroupBy { source: Box<Node>, values: Vec<Expression> },
-  Having { source: Box<Node>, condition: Expression }, //maybe this ca go to filter
+  Having { source: Box<Node>, condition: Expression }, // INFO: Maybe this can go to filter
 
   Scan { table: String, alias: Option<String>, filter: Option<Expression> },
 
-  // Needs implementation
+  // TODO: Implement
   IndexLookup { table: String, alias: Option<String>, index: String },
   NestedLoopJoin { left: Box<Node>, right: Box<Node>, condition: Expression },
   HashJoin { left: Box<Node>, right: Box<Node>, condition: Expression },
@@ -111,10 +107,7 @@ pub enum Value {
 }
 
 #[derive(Debug)]
-pub struct Planner {
-  // INFO: This is the schema of the database
-  // catalog: &'a  // should be catalog
-}
+pub struct Planner {}
 
 impl Planner {
   pub fn new() -> Self {
@@ -134,30 +127,30 @@ impl Planner {
         let columns = columns
         .into_iter()
         .map(|column| {
-            let name = parse_identifier(column.name.clone());
+            let name = column.name.clone().parse_identifier();
             (name, column_definition_to_column(column))
         })
         .collect();
 
-        let name = parse_identifier(name);
+        let name = name.parse_identifier();
 
         Node::CreateTable { schema: Table::new(name, columns) }
       }
-      ast::Statement::DropTable { name } => Node::DropTable { table: parse_identifier(name) },
+      ast::Statement::DropTable { name } => Node::DropTable { table: name.parse_identifier() },
       ast::Statement::AlterTable { name, operation } => {
-        let table = parse_identifier(name);
+        let table = name.parse_identifier();
         let values = match operation {
           AlterTableOperation::AddColumn(column) => {
-            let column_name = parse_identifier(column.name);
+            let column_name = column.name.parse_identifier();
             let column_type = data_type_to_primitive(column.data_type);
 
             vec![(Expression::Identifier(column_name), Expression::DataType(column_type))]
           }
           AlterTableOperation::DropColumn(column) => {
-            vec![(Expression::Identifier(parse_identifier(column)), Expression::Identifier("".to_string()))]
+            vec![(Expression::Identifier(column.parse_identifier()), Expression::Identifier("".to_string()))]
           }
           AlterTableOperation::ModifyColumn(column) => {
-            let column_name = parse_identifier(column.name);
+            let column_name = column.name.parse_identifier();
             let column_type = data_type_to_primitive(column.data_type);
 
             vec![(Expression::Identifier(column_name), Expression::DataType(column_type))]
@@ -242,12 +235,6 @@ fn binary_operator_to_expression(operator: ast::Operator, left: ast::Expression,
   }
 }
 
-fn parse_identifier(expr: ast::Expression) -> String {
-  match expr {
-    ast::Expression::Identifier(name) => name,
-    _ => unimplemented!(),
-  }
-}
 
 fn data_type_to_primitive(data_type: ast::DataType) -> DataType {
   match data_type {
@@ -272,8 +259,7 @@ pub fn column_definition_to_column(column_definition: ast::ColumnDefinition) -> 
   let ast::ColumnDefinition { name, data_type, constraints } = column_definition;
 
   Column {
-    // i need id checkups and autoincrement
-    name: parse_identifier(name), // check if it is unique on the table and if not throw error
+    name: name.parse_identifier(), // check if it is unique on the table and if not throw error
     data_type: data_type_to_primitive(data_type),
     value: None,
     unqiue: false,
