@@ -2,7 +2,7 @@
 use std::vec;
 
 use crate::sql::{
-  catalog::catalog::{Column, DataType, Table},
+  catalog::{Column, DataType, Table},
   parser::ast::{self, AlterTableOperation, Statement},
 };
 
@@ -125,12 +125,12 @@ impl Planner {
       }
       ast::Statement::CreateTable { name, columns } => {
         let columns = columns
-        .into_iter()
-        .map(|column| {
+          .into_iter()
+          .map(|column| {
             let name = column.name.clone().parse_identifier();
             (name, column_definition_to_column(column))
-        })
-        .collect();
+          })
+          .collect();
 
         let name = name.parse_identifier();
 
@@ -235,12 +235,11 @@ fn binary_operator_to_expression(operator: ast::Operator, left: ast::Expression,
   }
 }
 
-
 fn data_type_to_primitive(data_type: ast::DataType) -> DataType {
   match data_type {
-    ast::DataType::Int => crate::sql::catalog::catalog::DataType::Int,
-    ast::DataType::Text => crate::sql::catalog::catalog::DataType::Text,
-    ast::DataType::Boolean => crate::sql::catalog::catalog::DataType::Boolean,
+    ast::DataType::Int => crate::sql::catalog::DataType::Int,
+    ast::DataType::Text => crate::sql::catalog::DataType::Text,
+    ast::DataType::Boolean => crate::sql::catalog::DataType::Boolean,
     _ => unimplemented!(),
   }
 }
@@ -261,8 +260,7 @@ pub fn column_definition_to_column(column_definition: ast::ColumnDefinition) -> 
   Column {
     name: name.parse_identifier(), // check if it is unique on the table and if not throw error
     data_type: data_type_to_primitive(data_type),
-    value: None,
-    unqiue: false,
+    unique: false,
     nullable: false,
     default: None,
     references: None,

@@ -28,18 +28,19 @@ pub mod storage;
 //   println!("{:?}", statement);
 // }
 
+
+// alter table ne radi majstore
 use std::io::{self, Write};
 
 use crate::sql::{
-  catalog,
-  planner::plan::{Node, Plan},
+  catalog, engine::Executor, planner::plan::{Node, Plan}
 };
 
 fn main() {
   let mut input = String::new();
 
   loop {
-    print!("Enter SQL query: ");
+    print!("db: ");
     io::stdout().flush().unwrap();
 
     input.clear();
@@ -52,26 +53,19 @@ fn main() {
     let mut storage_manager = storage::manager::StorageManager::new();
     let mut buffer_pool = storage::manager::BufferPool::new();
     let mut catalog = buffer_pool.get_catalog();
+    println!("{:?}", catalog);
 
     let mut parser = sql::parser::Parser::new(&input);
     let statement = parser.parse();
 
     let plan = sql::planner::plan::Planner::new().build(statement.unwrap());
     println!("{:?}", plan);
+
     let mut optimizer = sql::optimizer::optimizer::Optimizer::new(plan, catalog);
     let physical_plan = optimizer.optimize();
     println!("{:?}", physical_plan);
-    // println!("{:?}", catalog);
 
-    match &physical_plan.0 {
-      Node::CreateTable { schema } => {
-        let table = sql::catalog::catalog::Table::new(schema.name.clone(), schema.columns.clone());
-        buffer_pool.add_table_to_catalog(table);
-      }
-      // Node::DropTable { table } => {
-      //   buffer_pool.remove_table_from_catalog(table);
-      // }
-      _ => {}
-    }
+    let mut executor = Executor::new(physical_plan, &mut buffer_pool);
+    executor.execute();
   }
 }
